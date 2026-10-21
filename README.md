@@ -109,9 +109,8 @@ Command Prompt:
 git clone --recursive https://github.com/megabyte1024/bitoscope.git
 cd bitoscope
 cmake -S third_party -B build-deps -DCMAKE_INSTALL_PREFIX=%CD%/deps
-cmake --build build-deps --config Debug --target install
 cmake --build build-deps --config Release --target install
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CONFIGURATION_TYPES=Release
 cmake --build build --config Release
 ```
 
@@ -121,9 +120,8 @@ PowerShell:
 git clone --recursive https://github.com/megabyte1024/bitoscope.git
 cd bitoscope
 cmake -S third_party -B build-deps "-DCMAKE_INSTALL_PREFIX=$PWD/deps"
-cmake --build build-deps --config Debug --target install
 cmake --build build-deps --config Release --target install
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CONFIGURATION_TYPES=Release
 cmake --build build --config Release
 ```
 
