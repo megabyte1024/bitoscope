@@ -23,3 +23,8 @@ endif()
 set_property(GLOBAL APPEND PROPERTY JOB_POOLS bitoscope_build_jobs=${BITOSCOPE_BUILD_JOBS})
 set(CMAKE_JOB_POOL_COMPILE bitoscope_build_jobs)
 set(CMAKE_JOB_POOL_LINK bitoscope_build_jobs)
+
+# WHY: MSBuild compiles one file at a time; /MP<jobs> with one project at a time keeps to core limit.
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+  add_compile_options("$<$<OR:$<COMPILE_LANG_AND_ID:C,MSVC>,$<COMPILE_LANG_AND_ID:CXX,MSVC>>:/MP${BITOSCOPE_BUILD_JOBS}>")
+endif()
