@@ -74,8 +74,13 @@ sudo apt install build-essential cmake git pkg-config libusb-1.0-0-dev libvulkan
 ### Windows
 
 - Visual Studio 2022 or its Build Tools (see above), CMake and Git for Windows.
-- libusb from vcpkg: `vcpkg install libusb:x64-windows`. The project's configure is then given
-  vcpkg's toolchain file, as below.
+- libusb from vcpkg, installed into `C:\vcpkg` (the same in Command Prompt and PowerShell):
+
+  ```bat
+  git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+  C:\vcpkg\bootstrap-vcpkg.bat
+  C:\vcpkg\vcpkg install libusb:x64-windows
+  ```
 
 ## How to compile
 
@@ -98,13 +103,27 @@ A Debug build needs Debug libraries as well: a second deps build directory with
 
 ### Windows
 
+Command Prompt:
+
 ```bat
 git clone --recursive https://github.com/megabyte1024/bitoscope.git
 cd bitoscope
 cmake -S third_party -B build-deps -DCMAKE_INSTALL_PREFIX=%CD%/deps
 cmake --build build-deps --config Debug --target install
 cmake --build build-deps --config Release --target install
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+```
+
+PowerShell:
+
+```powershell
+git clone --recursive https://github.com/megabyte1024/bitoscope.git
+cd bitoscope
+cmake -S third_party -B build-deps "-DCMAKE_INSTALL_PREFIX=$PWD/deps"
+cmake --build build-deps --config Debug --target install
+cmake --build build-deps --config Release --target install
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
 ```
 
