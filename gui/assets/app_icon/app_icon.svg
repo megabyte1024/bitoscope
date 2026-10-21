@@ -1,0 +1,18 @@
+<!-- The GUI's application icon: four stacked digital
+     square waves, in four of the project's own cable-palette colours (libs/waveform_view/
+     channel_colors.cpp's dark-theme table), each with its own pulse widths, on a neutral light-grey
+     rounded-square background (the owner, 2026-09-30: lighter, neutral) - a logic
+     analyzer motif. Used at 32px and above by make_app_icon; app_icon_small.svg is the
+     simplified version for 16-24px (see that file). Fixed colours, not currentColor: this is a
+     standalone icon, not one of gui/assets/icons' themed toolbar icons. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="1" y="1" width="22" height="22" rx="5" fill="#c8c8c8"/>
+  <path d="M3,4.6 H5 V6.4 H9 V4.6 H11 V6.4 H17 V4.6 H21"
+        fill="none" stroke="#274dc7" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="M3,11.1 H4 V9.3 H7 V11.1 H8 V9.3 H13 V11.1 H15 V9.3 H21"
+        fill="none" stroke="#008f68" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="M3,14.0 H5 V15.8 H7 V14.0 H9 V15.8 H11 V14.0 H15 V15.8 H17 V14.0 H21"
+        fill="none" stroke="#d21524" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="M3,20.5 H7 V18.7 H9 V20.5 H15 V18.7 H17 V20.5 H21"
+        fill="none" stroke="#de5809" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

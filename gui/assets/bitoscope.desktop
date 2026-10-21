@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=bitoscope
+GenericName=Logic analyzer
+Comment=Capture, view and save logic signals
+Exec=bitoscope_gui
+Icon=bitoscope
+Terminal=false
+Categories=Development;Electronics;
+Keywords=logic analyzer;signals;capture;decoder;

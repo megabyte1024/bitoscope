@@ -1,0 +1,82 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+*.so.*
+
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories (build-*/ includes build-deps/, the deps build's tree)
+build/
+Build/
+build-*/
+
+# Install prefix of the third-party libraries (HDF5, zlib, Cap'n Proto, ...),
+# built once from their submodules by the deps build (third_party/CMakeLists.txt) - build
+# output, never committed.
+deps/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+
+# vcpkg
+vcpkg_installed/
+
+# debug information files
+*.dwo
+
+# test output & cache
+Testing/
+.cache/
+
+*.pyc
+
+# Packaged output folder - never committed.
+/dist/
+
+# Git worktrees Claude Code creates for its parallel agents (isolation: worktree) - never committed.
+.claude/worktrees/

@@ -1,0 +1,11 @@
+# Source and docs are LF in the repository and in every working tree, on every
+# platform. Without this, git on Windows (core.autocrlf=true) prints "LF will be
+# replaced by CRLF" for every file it touches, and a checkout writes CRLF that
+# the repository's own files never had.
+* text=auto eol=lf
+
+# Never rewrite line endings of binary files.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary

@@ -1,0 +1,11 @@
+<!-- The simplified application icon for small sizes (16, 20, 24px): app_icon.svg's four traces
+     read as noise below about 32px, so this keeps only two, thicker, with fewer transitions - the
+     same neutral light-grey rounded-square background and two of the same cable colours (blue, red). Used by
+     make_app_icon for pixel sizes <= 24; see app_icon.svg for the full design. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="1" y="1" width="22" height="22" rx="5" fill="#c8c8c8"/>
+  <path d="M3,5.6 H8 V10.4 H14 V5.6 H21"
+        fill="none" stroke="#274dc7" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="M3,18.4 H6 V13.6 H12 V18.4 H21"
+        fill="none" stroke="#d21524" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

@@ -1,0 +1,7 @@
+/*
+ * SPDX-License-Identifier: MIT
+ */
+
+// WHY: Resource ID 1 must stay the FIRST icon in the executable: Explorer and the taskbar use it,
+// and RegisterClassExW loads it by id.
+1 ICON "..\\..\\assets\\app_icon\\bitoscope.ico"

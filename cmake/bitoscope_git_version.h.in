@@ -1,0 +1,12 @@
+// Generated at configure time by cmake/BitoscopeVersion.cmake. Do not edit by hand; a new commit only regenerates this file and recompiles
+// libs/gui_format/version_format.cpp, the only file that includes it.
+#pragma once
+
+#define BITOSCOPE_VERSION "@PROJECT_VERSION@"
+// "tagged" (exactly on a clean tag), "dev" (past a tag, no tag at all, or a dirty tree), or
+// "no_git" (git was not available, or this is not a git checkout, at configure time).
+#define BITOSCOPE_GIT_KIND "@BITOSCOPE_GIT_KIND@"
+// Abbreviated commit hash; empty when BITOSCOPE_GIT_KIND is "no_git".
+#define BITOSCOPE_GIT_COMMIT "@BITOSCOPE_GIT_COMMIT@"
+// 1 if the working tree had uncommitted changes at configure time, else 0.
+#define BITOSCOPE_GIT_DIRTY @BITOSCOPE_GIT_DIRTY_INT@
