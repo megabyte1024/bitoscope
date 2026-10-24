@@ -134,7 +134,7 @@ cmake --build build --config Release
 
 On Windows it is `build\gui\Release\bitoscope_gui.exe`.
 
-## Distribution folder
+## Install
 
 `cmake --install` copies everything the application needs into one folder. The application finds
 `assets/`, `drivers/` and `decoders/` next to its own executable, so the folder can be moved or
