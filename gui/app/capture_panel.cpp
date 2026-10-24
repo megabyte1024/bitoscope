@@ -588,9 +588,9 @@ void GuiApp::lengthCombo(SessionUi& ui, const char* id) {
   ui.lengthEditing = editing;
   const ImVec2 fieldMin = ImGui::GetItemRectMin();
   const ImVec2 fieldMax = ImGui::GetItemRectMax();
-  tooltipAnyway(tr("Samples to capture: choose from list or type"));
+  tooltipAnyway(tr("Samples to capture: choose from list, or type count (1.5M) or time at sample rate (2 s, 50 ms)"));
   if (commit != gui_text_field::Commit::None) {
-    if (const auto typed = gc::parseLengthSamples(ui.lengthText.data())) {
+    if (const auto typed = gc::parseLength(ui.lengthText.data(), settings.sampleRateMilliHz)) {
       settings.lengthSamples = *typed;
     } else {
       status(trf("Length not changed: {}", typed.error()));

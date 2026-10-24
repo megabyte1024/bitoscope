@@ -11,6 +11,7 @@
 #include <default_channel_colors.h>
 #include <display_format.h>
 #include <device_label.h>
+#include <dock_focus.h>
 #include <device_status.h>
 #include <decoder_versions.h>
 #include <driver_version.h>
@@ -66,7 +67,7 @@ struct ShortcutRow {
 };
 
 std::string sessionWindowTitle(const gui_session::Session& session) {
-  return withId(session.name.c_str(), ("session/" + session.name).c_str());
+  return withId(session.tabTitle().c_str(), ("session/" + session.name).c_str());
 }
 
 void tooltip(const char* text) {
@@ -308,6 +309,20 @@ void GuiApp::drawMenuBar() {
     }
     ImGui::EndMenu();
   }
+  if (beginTopLevelMenu(withId(tr("Edit"), "menu/edit"))) {
+    SessionWaveform* waveform = activeWaveform();
+    const bool matches = waveform != nullptr && waveform->find.search && !waveform->find.search->matches().empty();
+    if (ImGui::MenuItem(tr("Find..."), tr("Ctrl+F"), false, waveform != nullptr)) {
+      openFind(*waveform);
+    }
+    if (ImGui::MenuItem(tr("Next"), "F3", false, matches)) {
+      stepFind(*waveform, true);
+    }
+    if (ImGui::MenuItem(tr("Prev"), tr("Shift+F3"), false, matches)) {
+      stepFind(*waveform, false);
+    }
+    ImGui::EndMenu();
+  }
   if (beginTopLevelMenu(withId(tr("View"), "menu/view"))) {
     if (ImGui::MenuItem(tr("Full screen"), "F11", platform_.isFullScreen())) {
       toggleFullScreen();
@@ -370,6 +385,13 @@ void GuiApp::drawMenuBar() {
     }
     if (ImGui::MenuItem(tr("Show bits"), nullptr, showDerivedRows_)) {
       setShowBits(!showDerivedRows_);
+    }
+    if (ImGui::MenuItem(tr("Show byte values"), nullptr, showByteValues_)) {
+      setShowByteValues(!showByteValues_);
+    }
+    tooltip(tr("16-bit, 32-bit and float values in tooltips of byte rows"));
+    if (ImGui::MenuItem(tr("Show pointer line"), nullptr, showPointerLine_)) {
+      setShowPointerLine(!showPointerLine_);
     }
     if (ImGui::BeginMenu(withId(tr("Properties position"), "menu/properties_position").c_str())) {
       using gui_prefs::PropertiesSide;
@@ -472,11 +494,8 @@ void GuiApp::drawStatusBar() {
                                                 : trf("{}: {}", session->name, capture))
                                  .c_str());
       }
-      const std::string right =
-        zoomPercent_ == gui_prefs::kZoomDefaultPercent
-          ? trf("Prototype - {} - {}", translator_.language(), darkInUse() ? tr("dark") : tr("light"))
-          : trf("Prototype - {} - {} - {}%", translator_.language(),
-                darkInUse() ? tr("dark") : tr("light"), zoomPercent_);
+      const std::string right = trf("{} - {} - {}%", translator_.language(),
+                                    darkInUse() ? tr("dark") : tr("light"), zoomPercent_);
       const float width = ImGui::CalcTextSize(right.c_str()).x;
       ImGui::SameLine(ImGui::GetWindowWidth() - width - ImGui::GetStyle().WindowPadding.x * 2);
       ImGui::TextDisabled("%s", right.c_str());
@@ -542,6 +561,7 @@ void GuiApp::drawFrame() {
   if (ImGui::IsKeyPressed(ImGuiKey_F11, false)) {
     toggleFullScreen();
   }
+  handleFindShortcuts();
 
   handleZoomShortcuts();
   drawMenuBar();
@@ -592,11 +612,7 @@ void GuiApp::drawSession(const gui_session::Session& session, ImGuiID centralNod
   bool* closeButton = sessions_.canClose(session.id) ? &open : nullptr;
   const std::string title = sessionWindowTitle(session);
   if (focusSession_ == session.id && focusDelayFrames_ == 0) {
-    ImGui::SetNextWindowFocus();
-    if (const ImGuiWindow* window = ImGui::FindWindowByName(title.c_str());
-        window != nullptr && window->DockNode != nullptr && window->DockNode->TabBar != nullptr) {
-      window->DockNode->TabBar->NextSelectedTabId = window->TabId;
-    }
+    gui_dock_focus::bringToFrontBeforeBegin(title.c_str());
     focusSession_.reset();
   }
   if (ImGui::Begin(title.c_str(), closeButton)) {
@@ -642,6 +658,7 @@ void GuiApp::closeSession(gui_session::SessionId id) {
   }
   retireWaveform(closing);
   sessionUi_.erase(id);
+  focusSession_ = sessions_.active();
   logger_.logf(log::LogLevel::info, "gui", "Session closed: {}", name);
   savePreferencesNow();
 }
@@ -808,8 +825,10 @@ void GuiApp::drawSessionBody(const gui_session::Session& session, SessionUi& ui)
   };
 
   const auto drawProperties = [&] {
-    if (ImGui::BeginChild("properties", ImVec2(propertiesWidth, 0), ImGuiChildFlags_Borders)) {
-      switch (ui.propertiesPanel.selectedView()) {
+    const gui_session::PropertiesView view = ui.propertiesPanel.selectedView();
+    const char* const childId = view == gui_session::PropertiesView::Device ? "properties" : "decoderProperties";
+    if (ImGui::BeginChild(childId, ImVec2(propertiesWidth, 0), ImGuiChildFlags_Borders)) {
+      switch (view) {
       case gui_session::PropertiesView::Device:
         drawDeviceProperties(ui);
         break;
@@ -879,7 +898,8 @@ void GuiApp::drawDeviceProperties(SessionUi& ui) {
     const gui_format::PropertyTreeColumns columns = propertyColumnsFor({tr("Channels")});
     propertyRowLabel(tr("Channels"), columns,
                      tr("Channels of file; lane is hidden while its channel is not selected"));
-    drawChannelSelector(ui.fileLanesShown, ui.channelColors, connectedChannels(), ui.keptDeviceChannels);
+    drawChannelSelector(ui.fileLanesShown, ui.channelColors, connectedChannels(), ui.waveform.get(),
+                        ui.keptDeviceChannels);
   } else if (!ui.settings || !ui.capabilities) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%s", ui.capabilitiesProblem.empty()
@@ -897,7 +917,7 @@ void GuiApp::drawDeviceProperties(SessionUi& ui) {
     propertyRowLabel(tr("Channels"), columns,
                      tr("Channels next capture takes; lane of capture shown is hidden "
                         "while its channel is not selected"));
-    drawChannelSelector(ui.settings->channels, ui.channelColors, connectedChannels());
+    drawChannelSelector(ui.settings->channels, ui.channelColors, connectedChannels(), ui.waveform.get());
     propertyRowLabel(tr("Pre-trigger"), columns,
                      tr("Share of length before trigger, when channel has one"));
     int percent = static_cast<int>(ui.settings->preTriggerPercent);
@@ -1204,7 +1224,7 @@ void GuiApp::drawPropertyRow(SessionUi& ui, const std::string& facetName, gui_pr
 }
 
 void GuiApp::drawChannelSelector(std::vector<bool>& selected, const std::vector<waveform_view::ColorChoice>& colors,
-                                 const std::vector<std::uint32_t>& connected,
+                                 const std::vector<std::uint32_t>& connected, const SessionWaveform* shown,
                                  const std::vector<std::uint32_t>& entryChannel) {
   namespace wv = waveform_view;
   namespace gc = gui_capture;
@@ -1268,25 +1288,62 @@ void GuiApp::drawChannelSelector(std::vector<bool>& selected, const std::vector<
     ImGui::PopID();
   }
   ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
-  if (ImGui::Button(withId(tr("All"), "channels/all").c_str())) {
-    wv::selectAllChannels(selected);
+  const std::array<std::string, 4> labels{withId(tr("With pulses"), "channels/pulses"),
+                                          withId(tr("Connected only"), "channels/connected"),
+                                          withId(tr("One"), "channels/one"), withId(tr("All"), "channels/all")};
+  std::array<float, labels.size()> labelWidths{};
+  for (std::size_t i = 0; i < labels.size(); ++i) {
+    constexpr bool hideTextAfterDoubleHash = true;
+    labelWidths[i] = ImGui::CalcTextSize(labels[i].c_str(), nullptr, hideTextAfterDoubleHash).x +
+                     ImGui::GetStyle().FramePadding.x * 2.0f;
   }
-  ImGui::SameLine();
-  if (ImGui::Button(withId(tr("One"), "channels/one").c_str())) {
-    wv::selectOneChannel(selected);
+  const std::vector<int> rows = gui_format::buttonRows(labelWidths, gap, ImGui::GetContentRegionAvail().x);
+  const auto placeButton = [&](std::size_t i) {
+    if (i == 0) {
+      return;
+    }
+    if (rows[i] == rows[i - 1]) {
+      ImGui::SameLine(0.0f, gap);
+    } else {
+      ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
+    }
+  };
+  const bool captureShown =
+    shown != nullptr && shown->shows == SessionWaveform::Shows::Kept && shown->source != nullptr;
+  ImGui::BeginDisabled(!captureShown);
+  if (ImGui::Button(labels[0].c_str())) {
+    const std::vector<std::uint32_t> pulsing = wv::channelsWithPulses(*shown->source, shown->laneDevice);
+    const std::vector<std::uint32_t> pulsingEntries =
+      entryChannel.empty() ? pulsing : wv::lanesOfChannels(entryChannel, pulsing);
+    if (!wv::selectOnlyChannels(selected, pulsingEntries)) {
+      status(tr("No channel has pulses: every lane stays high or low"));
+    }
   }
-  ImGui::SameLine();
+  ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("%s", captureShown ? tr("Hide channels whose lane stays high or low for whole capture")
+                                         : tr("No capture is shown"));
+  }
+  placeButton(1);
   const std::vector<std::uint32_t> connectedEntries =
     entryChannel.empty() ? connected : wv::lanesOfChannels(entryChannel, connected);
   const bool anyConnected = std::any_of(connectedEntries.begin(), connectedEntries.end(),
                                         [&](std::uint32_t c) { return c < selected.size(); });
   ImGui::BeginDisabled(!anyConnected);
-  if (ImGui::Button(withId(tr("Connected only"), "channels/connected").c_str())) {
+  if (ImGui::Button(labels[1].c_str())) {
     wv::selectOnlyChannels(selected, connectedEntries);
   }
   ImGui::EndDisabled();
   if (!anyConnected && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("%s", tr("No channel is connected to decoder"));
+  }
+  placeButton(2);
+  if (ImGui::Button(labels[2].c_str())) {
+    wv::selectOneChannel(selected);
+  }
+  placeButton(3);
+  if (ImGui::Button(labels[3].c_str())) {
+    wv::selectAllChannels(selected);
   }
 }
 
@@ -1773,8 +1830,11 @@ void GuiApp::drawKeyboardShortcuts() {
       ImGui::TableSetupColumn(tr("Shortcut"));
       ImGui::TableSetupColumn(tr("Action"));
       ImGui::TableHeadersRow();
-      const std::array<ShortcutRow, 6> rows{{
+      const std::array<ShortcutRow, 9> rows{{
         {"F11", tr("Full screen")},
+        {"Ctrl+F", tr("Find bytes")},
+        {"F3", tr("Next match")},
+        {"Shift+F3", tr("Previous match")},
         {"Ctrl+=", tr("Zoom in")},
         {"Ctrl+-", tr("Zoom out")},
         {"Ctrl+NumPad0", tr("Reset zoom")},

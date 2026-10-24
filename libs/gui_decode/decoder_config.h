@@ -18,7 +18,6 @@
 #include "color_choice.h"
 #include "decoder.h"
 #include "decoder_registry.h"
-#include "decoder_visibility.h"
 #include "number_format.h"
 
 namespace bitoscope::gui_decode {
@@ -65,16 +64,10 @@ class DecoderConfig {
 
   const std::optional<waveform_view::ColorChoice>& color() const { return color_; }
   void setColor(std::optional<waveform_view::ColorChoice> color) { color_ = color; }
-  std::optional<waveform_view::ColorChoice> classColor(std::uint32_t rowId, std::uint32_t classId) const;
-  void setClassColor(std::uint32_t rowId, std::uint32_t classId, std::optional<waveform_view::ColorChoice> color);
-  const std::map<waveform_view::RowClass, waveform_view::ColorChoice>& classColors() const { return classColors_; }
 
   bitoscope::decode::DataFormat rowDataFormat(std::uint32_t rowId) const;
   bool setRowDataFormat(std::uint32_t rowId, bitoscope::decode::DataFormat format);
   const std::map<std::uint32_t, bitoscope::decode::DataFormat>& rowDataFormats() const { return rowDataFormats_; }
-
-  const waveform_view::DecoderVisibility& visibility() const { return visibility_; }
-  waveform_view::DecoderVisibility& visibility() { return visibility_; }
 
   std::optional<std::uint32_t> channelBinding(std::string_view channelName) const;
   std::vector<std::uint32_t> boundDeviceChannels() const;
@@ -112,9 +105,7 @@ class DecoderConfig {
   std::map<std::string, std::string, std::less<>> optionValues_;
   std::map<std::string, std::string, std::less<>> errors_;
   std::optional<waveform_view::ColorChoice> color_;
-  std::map<waveform_view::RowClass, waveform_view::ColorChoice> classColors_;
   std::map<std::uint32_t, bitoscope::decode::DataFormat> rowDataFormats_;
-  waveform_view::DecoderVisibility visibility_;
 };
 
 std::string uniqueDecoderId(std::string_view decoderName, std::span<const DecoderConfig> configs);

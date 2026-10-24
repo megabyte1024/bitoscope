@@ -12,7 +12,7 @@ namespace bitoscope::decoders_lowlevel {
 
 namespace {
 
-constexpr std::string_view kPluginVersion = "1.0.0";
+constexpr std::string_view kPluginVersion = "0.1.0";
 
 }
 

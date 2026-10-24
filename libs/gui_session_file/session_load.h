@@ -34,7 +34,6 @@ struct LoadedPanel {
   std::optional<waveform_view::CursorPair> cursors;
   bool showCursors = false;
   std::optional<std::string> laneOrderText;
-  std::optional<std::string> decoderVisibilityText;
   std::vector<capture::SavedProperty> deviceProperties;
   // WHY: Decoded results stored in a file are ignored: owner decision, every decoder runs again on open.
   std::vector<std::pair<std::string, std::string>> decoderSetup;

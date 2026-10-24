@@ -73,7 +73,6 @@ struct ViewState {
   std::vector<std::string> channel_colors;
   std::optional<std::string> lane_order;
   std::vector<std::string> channel_names;
-  std::optional<std::string> decoder_visibility;
   bool operator==(const ViewState&) const = default;
 };
 

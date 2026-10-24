@@ -7,7 +7,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,7 +17,7 @@
 #include "annotation_groups.h"
 #include "color_choice.h"
 #include "decoder.h"
-#include "decoder_row_strip.h"
+#include "annotation_row_layout.h"
 #include "decoder_visibility.h"
 #include "decoding_prefix.h"
 #include "derived_lane_rows.h"
@@ -54,7 +53,6 @@ struct LanePictureGeometry {
   float traceLeft = 0.0f;
   float traceRight = 0.0f;
   std::vector<float> rowTops;
-  std::vector<float> rowBands;
   bool operator==(const LanePictureGeometry&) const = default;
 };
 
@@ -64,7 +62,6 @@ struct LanePictureInput {
   std::span<const decode::AnnotationRow> rows;
   const DecoderVisibility* visibility = nullptr;
   std::span<const decode::AnnotationClass> classes;
-  const std::map<RowClass, ColorChoice>* classColors = nullptr;
   LaneDrawing drawing = LaneDrawing::Nothing;
   std::uint64_t watermark = 0;
   Viewport columns{1, 1};

@@ -17,7 +17,7 @@
 #include "decoder.h"
 #include "decoder_config.h"
 #include "decoder_registry.h"
-#include "decoder_row_strip.h"
+#include "annotation_row_layout.h"
 #include "decoder_visibility.h"
 #include "decoding_prefix.h"
 #include "lane_derivation.h"
@@ -53,41 +53,17 @@ class DecoderLaneLabelCache {
   std::size_t builds_ = 0;
 };
 
-struct DecoderRowStrip {
-  std::vector<bitoscope::waveform_view::StripClass> classes;
-  bitoscope::waveform_view::RowStripLayout layout;
-  bool operator==(const DecoderRowStrip& other) const {
-    return classes == other.classes && layout.classItems == other.layout.classItems &&
-           layout.formatLine == other.layout.formatLine && layout.lines == other.layout.lines &&
-           layout.height == other.layout.height;
-  }
-};
-
-struct RowStripMetrics {
-  double pitch = 0.0;
-  double width = 0.0;
-  double gap = 0.0;
-  double linePitch = 0.0;
-  double padding = 0.0;
-};
-
 struct DecoderLaneModelInput {
-  const DecoderConfig* config = nullptr;
   const AnnotationStore* store = nullptr;
   std::size_t index = 0;
   const DecoderLaneLabels* labels = nullptr;
-  const bitoscope::decode::DecoderRegistry* registry = nullptr;
   const bitoscope::decode::SignalView* capture = nullptr;
   bool showDerived = true;
-  std::function<bool(std::uint32_t row)> stripOpen;
-  std::function<double(const bitoscope::waveform_view::StripClass& cls)> stripItemWidth;
-  RowStripMetrics metrics;
+  double rowPitch = 0.0;
 };
 
 struct DecoderLaneModel {
   std::vector<bitoscope::decode::AnnotationRow> rows;
-  std::vector<bitoscope::waveform_view::DecoderRowSpace> spaces;
-  std::vector<std::optional<DecoderRowStrip>> strips;
   std::vector<bool> takesFormat;
   LaneDerivation derivation;
   bitoscope::waveform_view::DecoderVisibility visibility;

@@ -65,7 +65,6 @@ struct LanePictureKey {
   std::vector<bitoscope::decode::AnnotationRow> rows;
   std::vector<bitoscope::decode::AnnotationClass> classes;
   bitoscope::decode::OptionMap options;
-  std::map<bitoscope::waveform_view::RowClass, bitoscope::waveform_view::ColorChoice> classColors;
   bitoscope::decode::HexStyle hexStyle = bitoscope::decode::HexStyle::Prefixed;
   std::map<std::uint32_t, bitoscope::decode::DataFormat> rowDataFormats;
   std::vector<bitoscope::decode::RowSource> rowSources;

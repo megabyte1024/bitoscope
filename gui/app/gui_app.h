@@ -29,6 +29,7 @@
 #include <decoder.h>
 #include <decoder_config.h>
 #include <decoder_lane_model.h>
+#include <find_matches.h>
 #include <lane_picture_cache.h>
 #include <decoder_registry.h>
 #include <decoder_runner.h>
@@ -64,6 +65,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -207,6 +209,8 @@ class GuiApp {
   void setSignalStyle(gui_prefs::SignalStyle style);
   void setHexStyle(decode::HexStyle style);
   void setShowBits(bool show);
+  void setShowByteValues(bool show);
+  void setShowPointerLine(bool show);
   void setReduceIdleFrameRate(bool reduce);
 
   void zoomIn();
@@ -292,6 +296,14 @@ class GuiApp {
   static bool hasLanes(const SessionUi& ui);
 
   void handleZoomShortcuts();
+  SessionWaveform* activeWaveform();
+  void openFind(SessionWaveform& waveform);
+  void stepFind(SessionWaveform& waveform, bool forward);
+  void handleFindShortcuts();
+  std::optional<gui_decode::FindMatch> updateFind(SessionUi& ui, const waveform_view::LaneDisplay& lanes,
+                                                  std::span<const gui_decode::DecoderLaneModel> decoderLanes,
+                                                  std::uint64_t anchor);
+  void drawFindBox(SessionWaveform& waveform, float right, float top, bool dark);
   std::uint32_t iconTexturePixels(std::uint32_t layoutPixels) const;
   bool iconButton(const char* id, Icon icon, const char* tooltip, bool mirrored = false,
                   bool selected = false);
@@ -355,7 +367,7 @@ class GuiApp {
   DecoderSettingsChange drawDecoderSettings(SessionUi& ui, std::size_t index, const DecoderChannelChoices& channels);
   void applyDecoderSettingsChange(gui_session::SessionId id, SessionUi& ui, const DecoderSettingsChange& change);
   void drawChannelSelector(std::vector<bool>& selected, const std::vector<waveform_view::ColorChoice>& colors,
-                           const std::vector<std::uint32_t>& connected,
+                           const std::vector<std::uint32_t>& connected, const SessionWaveform* shown,
                            const std::vector<std::uint32_t>& entryChannel = {});
   void drawNewSessionWizard();
   bool drawWizardDevicePage(Wizard& wizard);
@@ -388,6 +400,8 @@ class GuiApp {
   gui_prefs::SignalStyle signalStyle_ = gui_prefs::SignalStyle::LevelColors;
   decode::HexStyle hexStyle_ = decode::HexStyle::Suffixed;
   bool showDerivedRows_ = true;
+  bool showByteValues_ = true;
+  bool showPointerLine_ = true;
   waveform_view::PinSide lanePinSide_ = waveform_view::PinSide::Bottom;
 
   std::int32_t zoomPercent_ = gui_prefs::kZoomDefaultPercent;

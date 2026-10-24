@@ -60,21 +60,6 @@ void DecoderConfig::setInputBinding(std::string_view inputName, std::optional<st
   }
 }
 
-std::optional<waveform_view::ColorChoice> DecoderConfig::classColor(std::uint32_t rowId, std::uint32_t classId) const {
-  const auto it = classColors_.find({rowId, classId});
-  if (it == classColors_.end()) return std::nullopt;
-  return it->second;
-}
-
-void DecoderConfig::setClassColor(std::uint32_t rowId, std::uint32_t classId,
-                                  std::optional<waveform_view::ColorChoice> color) {
-  if (color.has_value()) {
-    classColors_[{rowId, classId}] = *color;
-  } else {
-    classColors_.erase({rowId, classId});
-  }
-}
-
 decode::DataFormat DecoderConfig::rowDataFormat(std::uint32_t rowId) const {
   const auto it = rowDataFormats_.find(rowId);
   return it == rowDataFormats_.end() ? decode::DataFormat::Hex : it->second;

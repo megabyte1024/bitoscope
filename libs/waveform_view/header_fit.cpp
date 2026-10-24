@@ -42,8 +42,6 @@ std::vector<HeaderParts> decoderLaneHeaders(std::span<const double> rowTextWidth
     } else {
       parts.indent = metrics.indent + metrics.leftZone;
     }
-    parts.marker = metrics.triangle;
-    parts.markerGap = metrics.triangleGap;
     parts.text = rowTextWidths[row];
     parts.textGap = metrics.textGap;
     parts.pin = metrics.pin;

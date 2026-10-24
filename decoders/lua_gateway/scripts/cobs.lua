@@ -1,9 +1,8 @@
 -- SPDX-License-Identifier: MIT
 
-local ROW_DATA, ROW_PACKETS, ROW_ERRORS = 0, 1, 2
+local ROW_DATA, ROW_ERRORS = 0, 2
 
 local CLASS_DATA = 0
-local CLASS_PACKET = 1
 local CLASS_DELIMITER = 2
 local CLASS_DELIMITER_INSIDE_BLOCK = 3
 local CLASS_PACKET_TRUNCATED = 4
@@ -71,12 +70,11 @@ local function decode(sig, emit, out)
             emit(block_begin, e, ROW_ERRORS, CLASS_DELIMITER_INSIDE_BLOCK, n_of_m)
             boundary_flags = DAMAGED
           end
-          emit(packet_begin, last_end, ROW_PACKETS, CLASS_PACKET, decoded)
           damaged_packet()
           if put ~= nil then put(b_at, e_at, BOUNDARY, 0, boundary_flags) end
           reset()
         end
-        emit(b_at, e_at, ROW_PACKETS, CLASS_DELIMITER, 0)
+        emit(b_at, e_at, ROW_DATA, CLASS_DELIMITER, 0)
       else
         if not open then
           open = true
@@ -109,7 +107,7 @@ end
 
 decoder {
   name = "cobs",
-  version = "1.0.0",
+  version = "0.1.0",
   inputs = {
     { name = "in", description = "encoded bytes", type = "words", width = 8, required = true, display = "Input" },
   },
@@ -123,7 +121,6 @@ decoder {
   },
   classes = {
     { id = CLASS_DATA, name = "", format = "hex", digits = 2, role = "data" },
-    { id = CLASS_PACKET, name = "Packet", format = "decimal", role = "control" },
     { id = CLASS_DELIMITER, name = "Delimiter", role = "stop" },
     { id = CLASS_DELIMITER_INSIDE_BLOCK, name = "Delimiter inside block", format = "n_of_m_bytes", role = "error" },
     { id = CLASS_PACKET_TRUNCATED, name = "Packet truncated", role = "error" },
@@ -131,7 +128,7 @@ decoder {
     { id = CLASS_DAMAGED_PACKET, name = "Damaged packet", format = "decimal", role = "error" },
   },
   rows = {
-    { id = ROW_DATA, name = "Data" }, { id = ROW_PACKETS, name = "Packets" }, { id = ROW_ERRORS, name = "Errors" },
+    { id = ROW_DATA, name = "Data" }, { id = ROW_ERRORS, name = "Errors" },
   },
   decode = decode,
 }

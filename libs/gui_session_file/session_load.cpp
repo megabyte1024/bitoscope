@@ -20,10 +20,7 @@ namespace {
 std::optional<capture::ShortReason> shortReasonOf(std::string_view text) {
   if (text == "memory") return capture::ShortReason::Memory;
   if (text == "stopped by user") return capture::ShortReason::StoppedByUser;
-  // WHY: Accept both spellings of this reason: older files hold the one with an article.
-  if (text == "stopped with session" || text == "stopped with the session") {
-    return capture::ShortReason::StoppedWithSession;
-  }
+  if (text == "stopped with session") return capture::ShortReason::StoppedWithSession;
   return std::nullopt;
 }
 
@@ -121,7 +118,6 @@ std::expected<LoadedPanel, std::string> panelOf(hdf5::LoadedDevice device, std::
     // WHY: Lane arrangement stays text here: decoder lanes are named by decoder keys that only the GUI can resolve
     // after it rebuilds the decoders.
     if (view.lane_order) p.laneOrderText = *view.lane_order;
-    p.decoderVisibilityText = view.decoder_visibility;
     if (view.channel_names.size() == meta.channels.size()) {
       for (std::size_t k = 0; k < meta.channels.size(); ++k) {
         p.channelUserNames[meta.channels[k].index] = view.channel_names[k];

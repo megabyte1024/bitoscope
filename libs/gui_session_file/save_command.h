@@ -33,7 +33,14 @@ enum class SaveWrite {
   Full,
   ViewOnly,
 };
-SaveWrite saveWriteFor(const std::optional<KnownFile>& file, const std::filesystem::path& chosen);
+enum class KnownFileOnDisk {
+  Present,
+  Missing,
+};
+KnownFileOnDisk knownFileOnDisk(const std::optional<KnownFile>& file);
+
+SaveWrite saveWriteFor(const std::optional<KnownFile>& file, const std::filesystem::path& chosen,
+                       KnownFileOnDisk onDisk);
 
 bool sameFile(const std::filesystem::path& a, const std::filesystem::path& b);
 

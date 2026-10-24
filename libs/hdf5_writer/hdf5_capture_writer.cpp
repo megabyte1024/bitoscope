@@ -30,7 +30,7 @@ const char* shortReasonText(bitoscope::capture::ShortReason reason) {
     case bitoscope::capture::ShortReason::StoppedByUser:
       return "stopped by user";
     case bitoscope::capture::ShortReason::StoppedWithSession:
-      return "stopped with session";  // WHY: Older files hold 'stopped with the session'; the reader accepts both spellings.
+      return "stopped with session";
     case bitoscope::capture::ShortReason::Memory:
       break;
   }
@@ -261,9 +261,6 @@ std::expected<void, std::string> writeView(hid_t group, const bitoscope::capture
 
   if (view.lane_order) {
     if (auto r = writeStringAttr(view_group.id(), "lane_order", *view.lane_order); !r) return r;
-  }
-  if (view.decoder_visibility) {
-    if (auto r = writeStringAttr(view_group.id(), "decoder_visibility", *view.decoder_visibility); !r) return r;
   }
 
   Handle markers(H5Gcreate2(view_group.id(), "markers", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT),
@@ -594,11 +591,12 @@ std::expected<Handle, std::string> openDeviceGroup(hid_t file, const std::string
   if (!version) {
     return fail(std::format("'{}' is not bitoscope session file: no format_version attribute", native));
   }
+  if (*version != kFormatVersion) {
+    return fail(std::format("'{}' is format version {}, which this build does not support (only {})", native,
+                            *version, kFormatVersion));
+  }
   if (H5Lexists(file, "devices", H5P_DEFAULT) <= 0) {
-    return fail(std::format(
-        "'{}' is not bitoscope session file: it has no /devices group (format version {}, "
-        "which predates session layout)",
-        native, *version));
+    return fail(std::format("'{}' is not bitoscope session file: it has no /devices group", native));
   }
   Handle devices(H5Gopen2(file, "devices", H5P_DEFAULT), H5Gclose);
   if (!devices.ok()) return fail(std::format("cannot open /devices group of '{}'", native));

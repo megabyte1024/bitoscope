@@ -88,6 +88,7 @@ class AnnotationReader {
   std::uint64_t coveredBefore(std::size_t g, std::size_t i, std::size_t& reads);
   std::uint64_t value(std::size_t g, std::size_t i) { return valueThrough(g, i, cursors_[g % kSlots]); }
   std::uint64_t value(std::size_t g, std::size_t i, BlockCursor& own) { return valueThrough(g, i, own); }
+  BlockField blockValues(std::size_t g, std::size_t k) const { return groups_->groups_.data()[g].blockFields(k).values; }
   decode::Annotation at(AnnotationRef ref) {
     const auto [b, l] = span(ref.group, ref.index);
     return {b, b + l, groups_->groupRow(ref.group), groups_->groupClass(ref.group), value(ref.group, ref.index)};

@@ -29,8 +29,6 @@ struct DecoderHeaderSizes {
   double nameText = 0.0;
   double namePadding = 0.0;
   double zoneGap = 0.0;
-  double triangle = 0.0;
-  double triangleGap = 0.0;
   double columnRight = 0.0;
   double widestRowText = 0.0;
 };
@@ -44,7 +42,6 @@ struct DecoderHeaderLayout {
 DecoderHeaderLayout decoderHeaderLayout(const DecoderHeaderSizes& sizes);
 
 struct DecoderRowPlace {
-  double triangleX = 0.0;
   double textX = 0.0;
 };
 

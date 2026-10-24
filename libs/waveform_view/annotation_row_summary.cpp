@@ -123,7 +123,7 @@ RowSummary summarizeRow(const AnnotationGroups& groups, std::uint32_t row, const
 RowSummary summarizeRow(AnnotationReader& reader, std::uint32_t row, const DecoderVisibility& visibility,
                         double firstVisibleSample, double samplesPerPixel, std::uint32_t widthPixels) {
   const AnnotationGroups& groups = reader.groups();
-  if (!groups.coverageUsable() || widthPixels == 0 || !(samplesPerPixel > 0.0) || rowHidden(visibility, row)) {
+  if (!groups.coverageUsable() || widthPixels == 0 || !(samplesPerPixel > 0.0)) {
     return {};
   }
   std::vector<Track> tracks;
@@ -174,7 +174,7 @@ std::optional<AnnotationRef> rowAnnotationAt(AnnotationReader& reader, std::uint
                                              const DecoderVisibility& visibility, double firstVisibleSample,
                                              double samplesPerPixel, std::uint32_t widthPixels, std::uint32_t column) {
   const AnnotationGroups& groups = reader.groups();
-  if (!groups.coverageUsable() || column >= widthPixels || !(samplesPerPixel > 0.0) || rowHidden(visibility, row)) {
+  if (!groups.coverageUsable() || column >= widthPixels || !(samplesPerPixel > 0.0)) {
     return std::nullopt;
   }
   const double first = firstVisibleSample;

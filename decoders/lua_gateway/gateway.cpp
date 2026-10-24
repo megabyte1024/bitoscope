@@ -31,7 +31,7 @@ namespace bitoscope::lua_gateway {
 
 namespace {
 
-constexpr const char* kGatewayVersion = "1.0.0";
+constexpr const char* kGatewayVersion = "0.1.0";
 
 struct ChannelDecl {
   std::string name;

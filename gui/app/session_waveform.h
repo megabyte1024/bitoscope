@@ -8,7 +8,6 @@
 
 #include <capture_session.h>
 #include <capture_waveform_source.h>
-#include <class_color_target.h>
 #include <color_choice.h>
 #include <column_cache.h>
 #include <cursors.h>
@@ -27,10 +26,11 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "find_box.h"
 
 namespace bitoscope::gui {
 
@@ -84,7 +84,6 @@ struct SessionWaveform {
 
   std::optional<std::uint32_t> colorPickerChannel;
   std::array<float, 4> colorDraft{};
-  std::optional<gui_decode::ClassColorTarget> classColorTarget;
   std::optional<std::string> colorPickerDecoder;
   struct DecoderNameRefusal {
     std::string decoderId;
@@ -92,7 +91,6 @@ struct SessionWaveform {
     int frame = 0;
   };
   std::optional<DecoderNameRefusal> decoderNameRefusal;
-  std::set<std::pair<std::string, std::uint32_t>> openRowStrips;
   std::optional<std::pair<std::string, std::uint32_t>> rowFormatTarget;
 
   gui_lane_header::DragState laneDrag;
@@ -100,6 +98,8 @@ struct SessionWaveform {
   std::optional<waveform_view::LaneKey> headerMenuLane;
   std::uint32_t headerMenuChannel = 0;
   gui_lane_header::NameEdit nameEdit;
+
+  FindBox find;
 
   gui_waveform_frame::ColumnCache columns;
   waveform_view::PassUploads passUploads;

@@ -20,7 +20,7 @@
 #include "annotation_block.h"
 #include "annotation_memory.h"
 #include "decoder.h"
-#include "decoder_visibility.h"
+#include "row_class.h"
 
 namespace bitoscope::waveform_view {
 

@@ -25,8 +25,7 @@ struct LaneDerivation {
 LaneDerivation laneDerivation(const ShownResult& shown, const bitoscope::decode::SignalView* capture,
                               bool showDerived = true);
 
-bitoscope::waveform_view::DecoderVisibility laneVisibility(const bitoscope::waveform_view::DecoderVisibility& user,
-                                                           const LaneDerivation& lane);
+bitoscope::waveform_view::DecoderVisibility laneVisibility(const LaneDerivation& lane);
 
 const std::string* derivationNote(const LaneDerivation& lane, std::uint32_t row);
 

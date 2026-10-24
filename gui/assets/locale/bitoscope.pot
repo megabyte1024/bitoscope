@@ -99,7 +99,7 @@ msgid "{} ({})"
 msgstr ""
 
 #: gui/app/capture_panel.cpp
-msgid "Samples to capture: choose from list or type"
+msgid "Samples to capture: choose from list, or type count (1.5M) or time at sample rate (2 s, 50 ms)"
 msgstr ""
 
 #: gui/app/capture_panel.cpp
@@ -340,6 +340,70 @@ msgstr ""
 msgid "Remove"
 msgstr ""
 
+#: gui/app/find_box.cpp
+msgid "Odd number of hex digits"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Hex digits and spaces only"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Printable ASCII only"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Searching..."
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Out of memory"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Search failed"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "No results"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "{} of {}"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Aa"
+msgstr ""
+
+#: gui/app/find_box.cpp gui/app/waveform_panel.cpp
+msgid "Hex"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Find"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Match case"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Search hex bytes"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Previous match (Shift+F3)"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Next match (F3)"
+msgstr ""
+
+#: gui/app/find_box.cpp
+msgid "Close (Escape)"
+msgstr ""
+
 #: gui/app/gui_app.cpp
 msgid "Device in use by {} until its capture ends"
 msgstr ""
@@ -463,6 +527,30 @@ msgid "Exit"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "Edit"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Find..."
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Ctrl+F"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Next"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Prev"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Shift+F3"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "View"
 msgstr ""
 
@@ -526,6 +614,18 @@ msgstr ""
 
 #: gui/app/panels.cpp
 msgid "Show bits"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Show byte values"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "16-bit, 32-bit and float values in tooltips of byte rows"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Show pointer line"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -620,7 +720,7 @@ msgid "{}: idle"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "Prototype - {} - {}"
+msgid "{} - {} - {}%"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -629,10 +729,6 @@ msgstr ""
 
 #: gui/app/panels.cpp
 msgid "light"
-msgstr ""
-
-#: gui/app/panels.cpp
-msgid "Prototype - {} - {} - {}%"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -756,7 +852,11 @@ msgid "At least one channel must stay selected"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "All"
+msgid "With pulses"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Connected only"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -764,7 +864,19 @@ msgid "One"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "Connected only"
+msgid "All"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "No channel has pulses: every lane stays high or low"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Hide channels whose lane stays high or low for whole capture"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "No capture is shown"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -936,6 +1048,18 @@ msgid "Action"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "Find bytes"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Next match"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Previous match"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "Zoom in"
 msgstr ""
 
@@ -1086,7 +1210,27 @@ msgid "ASCII"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
-msgid "Hex"
+msgid "16-bit LE"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "16-bit BE"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "32-bit LE"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "32-bit BE"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "Float LE"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "Float BE"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
@@ -1170,34 +1314,6 @@ msgid "Choose decoder color"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
-msgid "Close row settings"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Open row settings"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Show this row"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Show all"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Hide all"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Format:"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Choose class color"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
 msgid "Not drawn: {}"
 msgstr ""
 
@@ -1234,11 +1350,11 @@ msgid "Rename channel"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
-msgid "Rename"
+msgid "Delete"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
-msgid "Delete"
+msgid "Rename"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
@@ -1259,12 +1375,4 @@ msgstr ""
 
 #: gui/app/waveform_panel.cpp
 msgid "Restore default color of decoder"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Class color"
-msgstr ""
-
-#: gui/app/waveform_panel.cpp
-msgid "Restore default color of class"
 msgstr ""

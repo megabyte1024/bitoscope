@@ -9,6 +9,8 @@
 
 namespace bitoscope::waveform_view {
 
+class WaveformSource;
+
 bool toggleChannelSelection(std::vector<bool>& selected, std::uint32_t channel);
 
 void selectAllChannels(std::vector<bool>& selected);
@@ -27,5 +29,8 @@ std::vector<std::uint32_t> shownLanes(std::size_t laneCount, const std::vector<b
 
 std::vector<std::uint32_t> lanesOfChannels(const std::vector<std::uint32_t>& laneDevice,
                                            const std::vector<std::uint32_t>& channels);
+
+std::vector<std::uint32_t> channelsWithPulses(const WaveformSource& source,
+                                              const std::vector<std::uint32_t>& laneDevice);
 
 }

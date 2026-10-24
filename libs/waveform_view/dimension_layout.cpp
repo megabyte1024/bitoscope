@@ -9,6 +9,23 @@
 
 namespace bitoscope::waveform_view {
 
+namespace {
+
+DimensionLayout arrowsPointingIn(double lo, double hi, double arrowLength) {
+  DimensionLayout layout;
+  layout.labelInside = false;
+  layout.arrowsOutward = false;
+  layout.leftArrowEnd = lo;
+  layout.leftArrowStart = lo - arrowLength;
+  layout.rightArrowEnd = hi;
+  layout.rightArrowStart = hi + arrowLength;
+  return layout;
+}
+
+bool inView(double x, double viewLeft, double viewRight) { return x >= viewLeft && x <= viewRight; }
+
+}
+
 DimensionLayout layoutDimension(double x0, double x1, double labelWidth, double arrowLength, double gap,
                                 double viewLeft, double viewRight) {
   const double lo = (std::min)(x0, x1);
@@ -25,15 +42,31 @@ DimensionLayout layoutDimension(double x0, double x1, double labelWidth, double 
     layout.leftArrowStart = lo + arrowLength;
     layout.rightArrowEnd = hi;
     layout.rightArrowStart = hi - arrowLength;
-    layout.labelX = lo + span * 0.5 - labelWidth * 0.5;
+    const double visibleLo = (std::max)(lo, viewLeft);
+    const double visibleHi = (std::min)(hi, viewRight);
+    const double centredInView = (visibleLo + visibleHi) * 0.5 - labelWidth * 0.5;
+    const double firstBesideArrow = layout.leftArrowStart + gap;
+    const double lastBesideArrow = layout.rightArrowStart - gap - labelWidth;
+    layout.labelX = (std::max)(firstBesideArrow, (std::min)(centredInView, lastBesideArrow));
+    if (inView(layout.labelX, viewLeft, viewRight) && inView(layout.labelX + labelWidth, viewLeft, viewRight)) {
+      return layout;
+    }
+
+    DimensionLayout outside = arrowsPointingIn(lo, hi, arrowLength);
+    const double rightOfLine = outside.rightArrowStart + gap;
+    const double leftOfLine = outside.leftArrowStart - gap - labelWidth;
+    if (inView(hi, viewLeft, viewRight) && rightOfLine + labelWidth <= viewRight) {
+      outside.labelX = rightOfLine;
+      return outside;
+    }
+    if (inView(lo, viewLeft, viewRight) && leftOfLine >= viewLeft) {
+      outside.labelX = leftOfLine;
+      return outside;
+    }
     return layout;
   }
 
-  layout.arrowsOutward = false;
-  layout.leftArrowEnd = lo;
-  layout.leftArrowStart = lo - arrowLength;
-  layout.rightArrowEnd = hi;
-  layout.rightArrowStart = hi + arrowLength;
+  layout = arrowsPointingIn(lo, hi, arrowLength);
 
   const double rightCandidate = layout.rightArrowStart + gap;
   if (rightCandidate + labelWidth <= viewRight) {
@@ -41,7 +74,6 @@ DimensionLayout layoutDimension(double x0, double x1, double labelWidth, double 
   } else {
     layout.labelX = layout.leftArrowStart - gap - labelWidth;
   }
-  (void)viewLeft;
   return layout;
 }
 

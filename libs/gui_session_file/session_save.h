@@ -19,7 +19,6 @@
 #include <capture_writer.h>
 #include <color_choice.h>
 #include <cursors.h>
-#include <decoder_visibility.h>
 #include <ipc_messages.h>
 #include <ipc_properties.h>
 #include <lane_order.h>
@@ -37,7 +36,6 @@ struct SaveView {
   bool showCursors = false;
   std::optional<waveform_view::LaneOrder> laneOrder;
   std::vector<std::string> decoderIds;
-  std::vector<waveform_view::DecoderVisibility> decoderVisibility;
   std::vector<capture::SavedProperty> deviceProperties;
   std::vector<std::pair<std::string, std::string>> decoderSetup;
   std::vector<std::string> decoderPresentation;

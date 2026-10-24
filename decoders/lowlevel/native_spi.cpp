@@ -23,7 +23,7 @@ using plugin::ValueFormat;
 DecoderDeclaration NativeSpi::declaration() const {
   DecoderDeclaration d;
   d.name = "spi";
-  d.version = "1.0.0";
+  d.version = "0.1.0";
   d.channels = {{"clk", "clock", true, "CLK"},
                 {"miso", "master in, slave out", false, "MISO"},
                 {"mosi", "master out, slave in", false, "MOSI"},

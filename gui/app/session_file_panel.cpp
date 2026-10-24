@@ -11,6 +11,7 @@
 #include <default_channel_colors.h>
 #include <display_format.h>
 #include <plugin_decoder.h>
+#include <popup.h>
 #include <recent_files.h>
 #include <save_command.h>
 
@@ -81,7 +82,7 @@ void GuiApp::requestSave(gui_session::SessionId id, bool thenStart, gsf::SaveCom
   }
   const auto& known = ui->second.capture.knownFile();
   if (!gsf::saveAsksWhere(command, known)) {
-    startViewSave(id, *known, thenStart);
+    saveTo(id, pathOf(known->path), thenStart);
     return;
   }
   fileRequest_ = FileRequest{FileRequest::Kind::Save, id, thenStart};
@@ -154,7 +155,7 @@ void GuiApp::saveTo(gui_session::SessionId id, const std::filesystem::path& path
   }
   // WHY: Saving onto the known file rewrites only its view: a full rewrite would shrink a multi-device file to one.
   const auto& known = ui->second.capture.knownFile();
-  if (gsf::saveWriteFor(known, path) == gsf::SaveWrite::ViewOnly) {
+  if (gsf::saveWriteFor(known, path, gsf::knownFileOnDisk(known)) == gsf::SaveWrite::ViewOnly) {
     startViewSave(id, *known, thenStart);
     return;
   }
@@ -182,7 +183,6 @@ void GuiApp::startSave(gui_session::SessionId id, const std::filesystem::path& p
   }
   view.laneOrder = ui.laneOrder;
   view.decoderIds = gui_decode::decoderLaneKeys(ui.decoders);
-  view.decoderVisibility = gui_decode::decoderVisibilities(ui.decoders);
   view.deviceProperties = ui.keptDeviceProperties;
   view.decoderSetup = gui_decode::decoderSetupOf(ui.decoders, decoderRegistry());
   // WHY: A decoder skipped on load is written back at its original slot, so a re-save does not lose it.
@@ -237,6 +237,7 @@ void GuiApp::saveFinished(gui_session::SessionId id, const std::filesystem::path
     return;
   }
   logger_.logf(log::LogLevel::info, "file", "{}: saved to {}", name, utf8(path));
+  sessions_.savedTo(id, utf8(path));
   status(trf("Saved to {}", utf8(path.filename())));
   rememberFile(path);
   if (thenStart && ui != sessionUi_.end() && ui->second.startFlow.step() == gc::StartFlow::Step::AskUnsaved) {
@@ -264,7 +265,6 @@ void GuiApp::startViewSave(gui_session::SessionId id, const gc::PanelCapture::Kn
   }
   view.laneOrder = ui.laneOrder;
   view.decoderIds = gui_decode::decoderLaneKeys(ui.decoders);
-  view.decoderVisibility = gui_decode::decoderVisibilities(ui.decoders);
   std::optional<gsf::DecoderUpdate> decoders;
   std::vector<std::pair<std::string, std::string>> decodersAtStart;
   std::vector<std::string> presentationAtStart;
@@ -474,13 +474,6 @@ void GuiApp::opened(const std::filesystem::path& path,
       }
       ui.laneOrder = saved ? std::move(*saved) : wv::defaultLaneOrder(ui.keptDeviceChannels, decoderOrder);
       ui.laneOrder.sync(ui.keptDeviceChannels, ui.decoders.size());
-    }
-    if (panel.decoderVisibilityText) {
-      if (auto applied = gui_decode::applyDecoderVisibility(ui.decoders, *panel.decoderVisibilityText, decoderRegistry());
-          !applied) {
-        logger_.logf(log::LogLevel::warning, "file", "{}: saved hidden decoder rows and classes are not read ({}); "
-                     "every row and class is shown", name, applied.error());
-      }
     }
     runDecodersForSession(id, ui);
   }
@@ -709,7 +702,8 @@ void GuiApp::drawFileErrorModal() {
       ImGui::TextWrapped("%s", fileError_->c_str());
     }
     ImGui::Separator();
-    if (ImGui::Button(tr("OK")) || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+    if (gui_popup::rightAlignedButton(tr("OK")) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        ImGui::IsKeyPressed(ImGuiKey_Enter)) {
       fileError_.reset();
       ImGui::CloseCurrentPopup();
     }

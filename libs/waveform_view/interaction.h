@@ -82,6 +82,10 @@ ScrollRange scrollRangeFor(const Viewport& viewport, uint64_t totalSamples);
 
 void scrollTo(Viewport& viewport, int64_t position, uint64_t totalSamples);
 
+void panToShow(Viewport& viewport, uint64_t begin, uint64_t end, uint64_t totalSamples);
+
+double scrollToShowRow(double scrollY, double viewHeight, double rowTop, double rowHeight);
+
 uint64_t cursorSampleAtPixel(const Viewport& viewport, double pixelX, uint64_t totalSamples);
 
 bool canPlaceMarkersAndCursors(uint64_t totalSamples);

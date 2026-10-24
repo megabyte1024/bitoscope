@@ -41,9 +41,13 @@ struct Session {
   std::string lostReason{};
   DeviceUnavailable unavailable = DeviceUnavailable::None;
   std::string openedFrom{};
+  std::string savedFileTitle{};
 
   bool waitsForDevice() const;
+  const std::string& tabTitle() const;
 };
+
+std::string fileTitle(std::string_view path);
 
 enum class DeviceReasonKind {
   Busy,
@@ -86,6 +90,7 @@ class SessionList {
   std::vector<std::string> persistentNames() const;
 
   void setOpenedFrom(SessionId id, std::string path);
+  void savedTo(SessionId id, std::string_view path);
 
   std::optional<SessionId> active() const { return active_; }
   void setActive(SessionId id);

@@ -32,4 +32,23 @@ int buttonsPerRow(float availableWidth, float buttonSize, float gap) {
   return (std::max)(1, n);
 }
 
+std::vector<int> buttonRows(std::span<const float> buttonWidths, float gap, float availableWidth) {
+  std::vector<int> rows;
+  rows.reserve(buttonWidths.size());
+  int row = 0;
+  float rowWidth = 0.0f;
+  for (const float width : buttonWidths) {
+    if (rows.empty()) {
+      rowWidth = width;
+    } else if (rowWidth + gap + width > availableWidth) {
+      ++row;
+      rowWidth = width;
+    } else {
+      rowWidth += gap + width;
+    }
+    rows.push_back(row);
+  }
+  return rows;
+}
+
 }

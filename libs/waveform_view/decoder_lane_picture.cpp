@@ -19,6 +19,13 @@ std::string_view LanePicture::textOf(const LanePrimitive& primitive) const {
 
 namespace {
 
+constexpr float kBitMarkHeightFraction = 0.5f;
+
+struct MarkBand {
+  float top = 0.0f;
+  float bottom = 0.0f;
+};
+
 class PictureBuilder {
  public:
   PictureBuilder(const LanePictureInput& in, LanePicture& out)
@@ -95,6 +102,15 @@ class PictureBuilder {
 
   Rgb8 fillOf(std::uint32_t row, std::uint32_t cls) const { return classFill(fills_, row, cls, style_.neutralFill); }
 
+  bool bitClass(std::uint32_t cls) const { return std::ranges::find(bitClasses_, cls) != bitClasses_.end(); }
+
+  MarkBand markBand(float bandTop, std::uint32_t cls) const {
+    const MarkBand full{bandTop + markInset_, bandTop + style_.decoderPitch - markInset_};
+    if (!bitClass(cls)) return full;
+    const float margin = (full.bottom - full.top) * (1.0f - kBitMarkHeightFraction) * 0.5f;
+    return MarkBand{snapped(full.top + margin), snapped(full.bottom - margin)};
+  }
+
   void addCondensed(std::vector<CondensedMark>& marks, double firstX, double lastX, const decode::Annotation& a) const {
     const double width = static_cast<double>(in_.columnCount);
     if (lastX < 0.0 || firstX >= width) return;
@@ -124,21 +140,22 @@ class PictureBuilder {
     const float x0 = columnX(span.x0);
     const float x1 = columnX(span.x1);
     const Rgb8 fill = fillOf(a.row, a.cls);
-    const AnnotationShape outline = annotationShape(x0, x1, bandTop + markInset_,
-                                                    bandTop + style_.decoderPitch - markInset_,
-                                                    style_.em * kHexagonMaxPointEm);
+    const bool bit = bitClass(a.cls);
+    const MarkBand band = markBand(bandTop, a.cls);
+    const double maxPoint = style_.em * kHexagonMaxPointEm * (bit ? kBitMarkHeightFraction : 1.0f);
+    const AnnotationShape outline = annotationShape(x0, x1, band.top, band.bottom, maxPoint);
     if (outline.count == 0) return;
     if (outline.depth > 0.0) {
-      polygon(outline, pack(fill), pack(annotationOutlineColor(fill, style_.dark)));
+      const std::uint32_t inside = bit && a.value == 0 ? 0u : pack(fill);
+      polygon(outline, inside, pack(annotationOutlineColor(fill, style_.dark)));
     } else if (condensed != nullptr) {
       addCondensed(*condensed, span.x0, span.x1, a);
       return;
     } else {
       const float half = style_.lineWidth * 0.5f;
-      rect(LanePoint{x0 - half, bandTop + markInset_}, LanePoint{x1 + half, bandTop + style_.decoderPitch - markInset_},
-           pack(fill));
+      rect(LanePoint{x0 - half, band.top}, LanePoint{x1 + half, band.bottom}, pack(fill));
     }
-    if (in_.text == nullptr) return;
+    if (in_.text == nullptr || bit) return;
     if (x1 - x0 - 2.0f * static_cast<float>(outline.depth) < minTextWidth_) return;
     std::string markText;
     if (in_.text->listsWords(a)) {
@@ -157,8 +174,8 @@ class PictureBuilder {
 
   void runs(std::span<const ColumnRun> columnRuns, std::uint32_t row, float bandTop) {
     for (const ColumnRun& run : columnRuns) {
-      rect(LanePoint{columnX(run.firstColumn), bandTop + markInset_},
-           LanePoint{columnX(run.lastColumn + 1.0), bandTop + style_.decoderPitch - markInset_},
+      const MarkBand band = markBand(bandTop, run.cls);
+      rect(LanePoint{columnX(run.firstColumn), band.top}, LanePoint{columnX(run.lastColumn + 1.0), band.bottom},
            pack(fillOf(row, run.cls)));
     }
   }
@@ -171,10 +188,11 @@ class PictureBuilder {
     const DecoderVisibility& visibility = *in_.visibility;
     const std::span<const decode::AnnotationRow> rows = in_.rows;
     const std::vector<float>& rowTops = in_.geometry.rowTops;
-    static const std::map<RowClass, ColorChoice> kNoColors;
-    fills_ = annotationClassFills(rows, laneRowClassPairs(groups, derived), in_.classes,
-                                  in_.classColors != nullptr ? *in_.classColors : kNoColors, style_.dark,
+    fills_ = annotationClassFills(rows, laneRowClassPairs(groups, derived), in_.classes, style_.dark,
                                   style_.neutralFill);
+    for (const decode::AnnotationClass& cls : in_.classes) {
+      if (cls.role == decode::AnnotationRole::Bit) bitClasses_.push_back(cls.id);
+    }
     const double rangeBeginD = in_.columns.firstVisibleSample();
     const double rangeEndD = rangeBeginD + in_.columns.samplesPerPixel() * static_cast<double>(in_.columnCount);
     const std::uint64_t rangeBegin = static_cast<std::uint64_t>((std::max)(0.0, std::floor(rangeBeginD)));
@@ -186,14 +204,12 @@ class PictureBuilder {
     const double spp = in_.columns.samplesPerPixel();
     const std::uint32_t columnCount = in_.columnCount;
     out_.hatched = hatchedColumns(in_.drawing, in_.watermark, first, spp, columnCount);
-    const auto rowShown = [&](std::size_t slot) { return !rowHidden(visibility, rows[slot].id); };
 
     out_.summarized = groups.usable() && groups.coverageUsable() &&
                       laneNeedsSummary(laneRangeCount(groups, inView, derived, rangeBegin, rangeEnd), columnCount);
     if (out_.summarized) {
       const AnnotationLaneSummary summary = summarizeLane(groups, first, spp, columnCount);
       for (std::size_t slot = 0; slot < rows.size(); ++slot) {
-        if (!rowShown(slot)) continue;
         const RowSummary rowSummary =
           summarizeLaneRow(groups, derived, rows[slot].id, visibility, first, spp, columnCount);
         runs(solidRuns(withoutColumns(rowSummary.runs, rowTextMarks(groups, summary.textMarks, rows[slot].id))),
@@ -202,7 +218,7 @@ class PictureBuilder {
       for (const LaneTextMark& mark : summary.textMarks) {
         const decode::Annotation a = groups.at(mark.annotation);
         const auto slot = rowSlot(rows, a.row);
-        if (!slot || !rowShown(*slot) || classHidden(visibility, a.row, a.cls)) continue;
+        if (!slot || classHidden(visibility, a.row, a.cls)) continue;
         shape(a, rowTops[*slot]);
       }
     } else {
@@ -233,7 +249,7 @@ class PictureBuilder {
     const float spacing = (std::max)(4.0f, std::round(style_.em * 0.5f));
     for (std::size_t slot = 0; slot < in_.geometry.rowTops.size(); ++slot) {
       const float bandTop = in_.geometry.rowTops[slot];
-      const float bandBottom = in_.geometry.rowTops[slot] + in_.geometry.rowBands[slot];
+      const float bandBottom = in_.geometry.rowTops[slot] + style_.decoderPitch;
       pushClip(LanePoint{hatchLeft, bandTop}, LanePoint{hatchRight, bandBottom});
       rect(LanePoint{hatchLeft, bandTop}, LanePoint{hatchRight, bandBottom}, style_.hatchFill);
       const float height = bandBottom - bandTop;
@@ -252,6 +268,7 @@ class PictureBuilder {
   const float markInset_;
   const float minTextWidth_;
   std::vector<ClassFill> fills_;
+  std::vector<std::uint32_t> bitClasses_;
 };
 
 }

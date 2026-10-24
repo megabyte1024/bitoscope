@@ -15,6 +15,17 @@ bool Session::waitsForDevice() const {
          (unavailable == DeviceUnavailable::Busy || unavailable == DeviceUnavailable::FirmwareLoading);
 }
 
+const std::string& Session::tabTitle() const {
+  return savedFileTitle.empty() ? name : savedFileTitle;
+}
+
+std::string fileTitle(std::string_view path) {
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::string_view fileName = slash == std::string_view::npos ? path : path.substr(slash + 1);
+  const std::size_t dot = fileName.rfind('.');
+  return std::string(dot == std::string_view::npos || dot == 0 ? fileName : fileName.substr(0, dot));
+}
+
 SessionList SessionList::fromNames(std::span<const std::string> names) {
   SessionList list;
   for (const std::string& name : names) {
@@ -117,6 +128,12 @@ std::vector<std::string> SessionList::persistentNames() const {
 void SessionList::setOpenedFrom(SessionId id, std::string path) {
   if (Session* s = findMutable(id)) {
     s->openedFrom = std::move(path);
+  }
+}
+
+void SessionList::savedTo(SessionId id, std::string_view path) {
+  if (Session* s = findMutable(id)) {
+    s->savedFileTitle = fileTitle(path);
   }
 }
 

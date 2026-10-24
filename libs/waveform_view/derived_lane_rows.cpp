@@ -295,7 +295,7 @@ RowSummary summarizeLaneRow(AnnotationReader& reader, const DerivedRows& derived
                             std::uint32_t widthPixels) {
   const DerivedRowSource* s = derived.find(row);
   if (s == nullptr) return summarizeRow(reader, row, visibility, firstVisibleSample, samplesPerPixel, widthPixels);
-  if (rowHidden(visibility, row) || classHidden(visibility, row, s->cls)) return {};
+  if (classHidden(visibility, row, s->cls)) return {};
   return summarizeGroupsAs(reader, s->sourceGroups, s->cls, firstVisibleSample, samplesPerPixel, widthPixels);
 }
 
@@ -320,7 +320,7 @@ std::optional<decode::Annotation> laneRowAnnotationAt(AnnotationReader& reader, 
     if (!at) return std::nullopt;
     return reader.at(*at);
   }
-  if (!groups.coverageUsable() || column >= widthPixels || !(samplesPerPixel > 0.0) || rowHidden(visibility, row) ||
+  if (!groups.coverageUsable() || column >= widthPixels || !(samplesPerPixel > 0.0) ||
       classHidden(visibility, row, s->cls)) {
     return std::nullopt;
   }
@@ -369,7 +369,7 @@ std::vector<RowLayout> layoutLaneRows(AnnotationReader& reader, const Annotation
   for (std::size_t slot = 0; slot < rows.size(); ++slot) {
     const std::uint32_t row = rows[slot].id;
     const DerivedRowSource* s = derived.find(row);
-    if (s == nullptr || rowHidden(visibility, row) || rowSlot(rows, row) != slot ||
+    if (s == nullptr || rowSlot(rows, row) != slot ||
         classHidden(visibility, row, s->cls)) {
       continue;
     }

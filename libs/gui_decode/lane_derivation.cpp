@@ -56,8 +56,8 @@ LaneDerivation laneDerivation(const ShownResult& shown, const decode::SignalView
   return out;
 }
 
-wv::DecoderVisibility laneVisibility(const wv::DecoderVisibility& user, const LaneDerivation& lane) {
-  wv::DecoderVisibility out = user;
+wv::DecoderVisibility laneVisibility(const LaneDerivation& lane) {
+  wv::DecoderVisibility out;
   for (const wv::RowClass& rowClass : lane.switchedOff) out.hiddenClasses.insert(rowClass);
   return out;
 }

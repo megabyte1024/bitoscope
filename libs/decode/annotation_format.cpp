@@ -48,7 +48,9 @@ std::string styledHex(uint64_t value, uint32_t digits, HexStyle style) {
 
 std::string asciiText(uint8_t byte) {
   constexpr char kBackslash = 92;
-  if (byte > 0x20 && byte < 0x7F) return std::string(1, static_cast<char>(byte));
+  constexpr char kQuote = 39;
+  if (byte == kQuote || byte == kBackslash) return std::string{kQuote, kBackslash, static_cast<char>(byte), kQuote};
+  if (byte > 0x20 && byte < 0x7F) return std::string{kQuote, static_cast<char>(byte), kQuote};
   char escape = 0;
   switch (byte) {
   case 0x07: escape = 'a'; break;
@@ -60,7 +62,7 @@ std::string asciiText(uint8_t byte) {
   case 0x0D: escape = 'r'; break;
   default: break;
   }
-  if (escape != 0) return std::string{kBackslash, escape};
+  if (escape != 0) return std::string{kQuote, kBackslash, escape, kQuote};
   return std::format("[{:02X}]", byte);
 }
 

@@ -30,8 +30,6 @@ double fitHeaderWidth(std::span<const HeaderParts> headers, double padding, doub
 struct DecoderHeaderMetrics {
   double indent = 0.0;
   double leftZone = 0.0;
-  double triangle = 0.0;
-  double triangleGap = 0.0;
   double textGap = 0.0;
   double pin = 0.0;
   double pinGap = 0.0;

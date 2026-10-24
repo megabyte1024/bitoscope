@@ -82,6 +82,8 @@ GuiApp::GuiApp(PlatformServices& platform, gui_prefs::StartupPreferences startup
   signalStyle_ = prefs_.signalStyle;
   hexStyle_ = prefs_.hexStyle;
   showDerivedRows_ = prefs_.showBits;
+  showByteValues_ = prefs_.showByteValues;
+  showPointerLine_ = prefs_.showPointerLine;
   lanePinSide_ = prefs_.lanePinSide;
   reduceIdleFrameRate_ = prefs_.reduceIdleFrameRate;
   zoomPercent_ = prefs_.zoomPercent;
@@ -487,6 +489,22 @@ void GuiApp::setShowBits(bool show) {
   savePreferencesNow();
 }
 
+void GuiApp::setShowByteValues(bool show) {
+  if (show == showByteValues_) {
+    return;
+  }
+  showByteValues_ = show;
+  savePreferencesNow();
+}
+
+void GuiApp::setShowPointerLine(bool show) {
+  if (show == showPointerLine_) {
+    return;
+  }
+  showPointerLine_ = show;
+  savePreferencesNow();
+}
+
 float GuiApp::zoomFactor() const {
   return gui_prefs::zoomFactor(zoomPercent_);
 }
@@ -709,6 +727,8 @@ gui_prefs::Preferences GuiApp::currentPreferences() {
   prefs.signalStyle = signalStyle_;
   prefs.hexStyle = hexStyle_;
   prefs.showBits = showDerivedRows_;
+  prefs.showByteValues = showByteValues_;
+  prefs.showPointerLine = showPointerLine_;
   prefs.lanePinSide = lanePinSide_;
   prefs.reduceIdleFrameRate = reduceIdleFrameRate_;
   prefs.zoomPercent = zoomPercent_;

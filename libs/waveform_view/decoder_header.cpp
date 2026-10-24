@@ -18,7 +18,7 @@ DecoderHeaderLayout decoderHeaderLayout(const DecoderHeaderSizes& sizes) {
   const double wanted = std::ceil(sizes.nameText + 2.0 * sizes.namePadding);
   const double preferred = std::clamp(wanted, minimum, maximum);
   const double room = std::floor(sizes.columnRight - sizes.indent - sizes.box - sizes.boxGap - sizes.zoneGap -
-                                 (sizes.triangle + sizes.triangleGap + sizes.widestRowText));
+                                 sizes.widestRowText);
   const double barWidth = (std::max)(sizes.box, (std::min)(preferred, room));
   layout.bar = HeaderRect{sizes.indent + sizes.box + sizes.boxGap, top, barWidth, sizes.box};
   layout.leftZone = sizes.box + sizes.boxGap + barWidth;
@@ -27,10 +27,8 @@ DecoderHeaderLayout decoderHeaderLayout(const DecoderHeaderSizes& sizes) {
 
 DecoderRowPlace decoderRowPlace(const DecoderHeaderSizes& sizes, const DecoderHeaderLayout& layout) {
   const double left = sizes.indent + layout.leftZone + sizes.zoneGap;
-  const double group = sizes.triangle + sizes.triangleGap + sizes.widestRowText;
   DecoderRowPlace place;
-  place.triangleX = (std::max)(left, sizes.columnRight - group);
-  place.textX = place.triangleX + sizes.triangle + sizes.triangleGap;
+  place.textX = (std::max)(left, sizes.columnRight - sizes.widestRowText);
   return place;
 }
 

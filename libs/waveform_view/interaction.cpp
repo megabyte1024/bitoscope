@@ -112,6 +112,21 @@ void scrollTo(Viewport& viewport, int64_t position, uint64_t totalSamples) {
   viewport.panPixels((target - viewport.firstVisibleSample()) / viewport.samplesPerPixel(), totalSamples);
 }
 
+void panToShow(Viewport& viewport, uint64_t begin, uint64_t end, uint64_t totalSamples) {
+  const double visibleSamples = viewport.samplesPerPixel() * static_cast<double>(viewport.widthPixels());
+  const double first = static_cast<double>(begin);
+  const double length = static_cast<double>(end) - first;
+  const double target = length <= visibleSamples ? first + (length - visibleSamples) / 2.0 : first;
+  viewport.panPixels((target - viewport.firstVisibleSample()) / viewport.samplesPerPixel(), totalSamples);
+}
+
+double scrollToShowRow(double scrollY, double viewHeight, double rowTop, double rowHeight) {
+  if (rowTop < scrollY || rowHeight > viewHeight) return rowTop;
+  const double rowBottom = rowTop + rowHeight;
+  if (rowBottom > scrollY + viewHeight) return rowBottom - viewHeight;
+  return scrollY;
+}
+
 uint64_t cursorSampleAtPixel(const Viewport& viewport, double pixelX, uint64_t totalSamples) {
   const double sample = std::round(viewport.pixelToSample(pixelX));
   if (sample <= 0.0) return 0;

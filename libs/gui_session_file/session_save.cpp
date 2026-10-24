@@ -81,7 +81,6 @@ capture::ViewState viewStateOf(const SaveView& view) {
     state.channel_colors.push_back(waveform_view::toText(color));
   }
   if (view.laneOrder) state.lane_order = waveform_view::toTextWithDecoderKeys(*view.laneOrder, view.decoderIds);
-  state.decoder_visibility = waveform_view::decoderVisibilityText(view.decoderIds, view.decoderVisibility);
   if (std::ranges::any_of(view.channelUserNames, [](const std::string& name) { return !name.empty(); })) {
     state.channel_names = view.channelUserNames;
   }

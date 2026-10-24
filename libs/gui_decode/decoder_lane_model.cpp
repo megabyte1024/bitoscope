@@ -43,7 +43,6 @@ void DecoderLaneLabelCache::refresh(std::span<const DecoderConfig> configs, cons
 }
 
 DecoderLaneModel decoderLaneModel(const DecoderLaneModelInput& input) {
-  const DecoderConfig& config = *input.config;
   const AnnotationStore& store = *input.store;
   const std::size_t d = input.index;
   DecoderLaneModel lane;
@@ -57,34 +56,15 @@ DecoderLaneModel decoderLaneModel(const DecoderLaneModelInput& input) {
   lane.rows = wv::shownDecoderRows(input.labels->declared,
                                    decoded != nullptr ? decoded->groups().rowIds() : std::span<const std::uint32_t>{});
   if (shown != nullptr) lane.derivation = laneDerivation(*shown, input.capture, input.showDerived);
-  lane.visibility = laneVisibility(config.visibility(), lane.derivation);
-  std::optional<std::vector<decode::AnnotationClass>> classes;
-  const RowStripMetrics& m = input.metrics;
+  lane.visibility = laneVisibility(lane.derivation);
   for (const decode::AnnotationRow& row : lane.rows) {
     const std::vector<std::uint32_t> present = decoded != nullptr
                                                  ? wv::laneRowClasses(decoded->groups(), lane.derivation.rows, row.id)
                                                  : std::vector<std::uint32_t>{};
-    const bool takesFormat =
-      decoded != nullptr && rowTakesDataFormat(row.id, present, shown->format.classes, input.labels->rowSources);
-    lane.takesFormat.push_back(takesFormat);
-    const bool open = input.stripOpen && input.stripOpen(row.id);
-    std::optional<DecoderRowStrip> strip;
-    if (open) {
-      if (!classes) {
-        classes = shown != nullptr ? shown->format.classes
-                                   : laneFormatContext(store, d, config, *input.registry).classes;
-      }
-      strip.emplace();
-      strip->classes = wv::rowStripClasses(present, *classes);
-      std::vector<double> widths;
-      for (const wv::StripClass& cls : strip->classes) widths.push_back(input.stripItemWidth(cls));
-      strip->layout = wv::layoutRowStrip(widths, m.width, m.gap, m.linePitch, m.padding, takesFormat);
-    }
-    lane.spaces.push_back(
-      wv::decoderRowSpace(wv::rowHidden(config.visibility(), row.id), open, m.pitch, strip ? strip->layout.height : 0.0));
-    lane.strips.push_back(std::move(strip));
+    lane.takesFormat.push_back(decoded != nullptr &&
+                               rowTakesDataFormat(row.id, present, shown->format.classes, input.labels->rowSources));
   }
-  lane.height = wv::decoderLaneHeight(wv::decoderRowHeights(lane.spaces), m.pitch);
+  lane.height = wv::decoderLaneHeight(lane.rows.size(), input.rowPitch);
   return lane;
 }
 

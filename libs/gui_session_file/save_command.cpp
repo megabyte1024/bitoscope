@@ -42,8 +42,19 @@ SaveDialogStart saveDialogStart(const std::optional<KnownFile>& file, const std:
   return {lastFolder, std::move(suggestedName)};
 }
 
-SaveWrite saveWriteFor(const std::optional<KnownFile>& file, const std::filesystem::path& chosen) {
-  return file && sameFile(pathOfUtf8(file->path), chosen) ? SaveWrite::ViewOnly : SaveWrite::Full;
+KnownFileOnDisk knownFileOnDisk(const std::optional<KnownFile>& file) {
+  if (!file) {
+    return KnownFileOnDisk::Missing;
+  }
+  std::error_code ec;
+  const bool present = std::filesystem::is_regular_file(pathOfUtf8(file->path), ec);
+  return present && !ec ? KnownFileOnDisk::Present : KnownFileOnDisk::Missing;
+}
+
+SaveWrite saveWriteFor(const std::optional<KnownFile>& file, const std::filesystem::path& chosen,
+                       KnownFileOnDisk onDisk) {
+  const bool ownFile = file && sameFile(pathOfUtf8(file->path), chosen);
+  return ownFile && onDisk == KnownFileOnDisk::Present ? SaveWrite::ViewOnly : SaveWrite::Full;
 }
 
 bool sameFile(const std::filesystem::path& a, const std::filesystem::path& b) {

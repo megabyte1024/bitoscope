@@ -5,8 +5,12 @@ add_library(bitoscope_gui_decode STATIC
     annotation_store.h
     annotation_text.cpp
     annotation_text.h
-    class_color_target.cpp
-    class_color_target.h
+    byte_search.cpp
+    byte_search.h
+    channel_choices.cpp
+    channel_choices.h
+    byte_values.cpp
+    byte_values.h
     decoded_annotations.cpp
     decoded_annotations.h
     decode_budget.cpp
@@ -19,6 +23,16 @@ add_library(bitoscope_gui_decode STATIC
     decode_signal_view.h
     derivation_context.cpp
     derivation_context.h
+    find_lanes.cpp
+    find_lanes.h
+    find_marks.cpp
+    find_marks.h
+    find_matches.cpp
+    find_matches.h
+    find_pattern.cpp
+    find_pattern.h
+    find_search.cpp
+    find_search.h
     decoder_chain_config.cpp
     decoder_chain_config.h
     decoder_config.cpp

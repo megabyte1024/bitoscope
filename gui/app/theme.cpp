@@ -104,8 +104,7 @@ void applyPalette(ImGuiStyle& style, const Palette& p, bool dark) {
   c[ImGuiCol_TabHovered] = p.hover;
   c[ImGuiCol_Tab] = p.sunken;
   c[ImGuiCol_TabSelected] = p.window;
-  // WHY: Read from c[] rather than recomputed, so this cannot drift from the selected button fill.
-  c[ImGuiCol_TabSelectedOverline] = c[ImGuiCol_Header];
+  c[ImGuiCol_TabSelectedOverline] = p.accent;
   c[ImGuiCol_TabDimmed] = p.sunken;
   c[ImGuiCol_TabDimmedSelected] = p.window;
   // WHY: Grey without keyboard focus on the tab bar: blue says where the keys go (owner decision).
@@ -170,6 +169,7 @@ ImGuiStyle makeStyle(bool dark, float dpiScale) {
   style.ScrollbarRounding = 6;
   style.GrabRounding = 4;
   style.TabRounding = 4;
+  style.TabBarOverlineSize = 2;
   style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
   style.WindowMenuButtonPosition = ImGuiDir_None;
 

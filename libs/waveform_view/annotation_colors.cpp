@@ -85,12 +85,6 @@ Rgb8 defaultAnnotationColor(AnnotationRole role, bool dark, Rgb8 neutral, std::s
 
 Rgb8 annotationTextColor(bool dark) { return dark ? Rgb8{255, 255, 255} : Rgb8{0, 0, 0}; }
 
-Rgb8 resolveAnnotationColor(AnnotationRole role, bool dark, Rgb8 neutral,
-                            const std::optional<ColorChoice>& override, std::size_t variant) {
-  if (override) return resolveColor(*override, dark);
-  return defaultAnnotationColor(role, dark, neutral, variant);
-}
-
 std::size_t annotationColorVariant(std::span<const decode::AnnotationRow> rows, std::span<const RowClass> rowClasses,
                                    std::span<const decode::AnnotationClass> classes, std::uint32_t row,
                                    AnnotationRole role) {

@@ -17,7 +17,7 @@ using plugin::ValueFormat;
 DecoderDeclaration NativeI2c::declaration() const {
   DecoderDeclaration d;
   d.name = "i2c";
-  d.version = "1.0.0";
+  d.version = "0.1.0";
   d.channels = {{"scl", "clock", true, "SCL"}, {"sda", "data", true, "SDA"}};
   // WHY: address_format option is unsupported: address always shown shifted (7-bit), reference default.
   d.unsupportedOptions = {"address_format"};

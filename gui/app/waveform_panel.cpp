@@ -23,7 +23,7 @@
 #include <decoder_lane_picture.h>
 #include <lane_picture_cache.h>
 #include <lane_text_source.h>
-#include <decoder_row_strip.h>
+#include <annotation_row_layout.h>
 #include <decoding_prefix.h>
 #include <derived_lane_rows.h>
 #include <lane_derivation.h>
@@ -51,6 +51,8 @@
 #include <lane_pin_side.h>
 #include <lane_regions.h>
 #include <lanes_on_screen.h>
+#include <byte_values.h>
+#include <find_lanes.h>
 #include <live_view.h>
 #include <popup.h>
 #include <pulse_measurement.h>
@@ -75,6 +77,7 @@
 #include <vector>
 
 #include "color_popup.h"
+#include "find_box.h"
 #include "gui_app.h"
 #include "platform_services.h"
 #include "session_waveform.h"
@@ -138,6 +141,40 @@ const char* dataFormatLabel(decode::DataFormat format) {
     break;
   }
   return tr("Hex");
+}
+
+const char* byteValueLabel(gd::ByteValueKind kind) {
+  switch (kind) {
+  case gd::ByteValueKind::U16Le:
+    return tr("16-bit LE");
+  case gd::ByteValueKind::U16Be:
+    return tr("16-bit BE");
+  case gd::ByteValueKind::U32Le:
+    return tr("32-bit LE");
+  case gd::ByteValueKind::U32Be:
+    return tr("32-bit BE");
+  case gd::ByteValueKind::F32Le:
+    return tr("Float LE");
+  case gd::ByteValueKind::F32Be:
+    break;
+  }
+  return tr("Float BE");
+}
+
+void drawByteValueLines(const std::vector<gd::ByteValueLine>& lines, float em) {
+  const float gap = em;
+  float labelWidth = 0.0f;
+  float valueWidth = 0.0f;
+  for (const gd::ByteValueLine& line : lines) {
+    labelWidth = (std::max)(labelWidth, ImGui::CalcTextSize(byteValueLabel(line.kind)).x);
+    valueWidth = (std::max)(valueWidth, ImGui::CalcTextSize(line.text.c_str()).x);
+  }
+  ImGui::Separator();
+  for (const gd::ByteValueLine& line : lines) {
+    ImGui::TextUnformatted(byteValueLabel(line.kind));
+    ImGui::SameLine(labelWidth + gap + valueWidth - ImGui::CalcTextSize(line.text.c_str()).x);
+    ImGui::TextUnformatted(line.text.c_str());
+  }
 }
 
 using ShownLane = wv::PlacedLane;
@@ -667,33 +704,18 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
   const wv::LaneNameFit nameLimit = wv::fitLaneNameWidth(nameFit);
   const float headerWidth = std::floor(static_cast<float>(nameLimit.laneNameWidth));
   const float headerWidest = static_cast<float>(nameLimit.widest);
-  const float rowTriangle = std::round(em * 0.6f);
-  const float stripPadding = std::round(em * 0.3f);
-  const float stripGap = std::round(em * 0.8f);
-  const float stripLinePitch = ImGui::GetFrameHeight() + std::round(em * 0.25f);
-  const float stripSwatch = ImGui::GetFrameHeight();
-  const float stripWidth = (std::max)(em, ImGui::GetContentRegionAvail().x - gutterWidth - style.ScrollbarSize);
-  const auto stripItemWidth = [&](const wv::StripClass& cls) {
-    return static_cast<double>(stripSwatch + style.ItemInnerSpacing.x + ImGui::GetFrameHeight() +
-                               style.ItemInnerSpacing.x + ImGui::CalcTextSize(cls.name.c_str()).x);
-  };
   ui.laneLabels.refresh(ui.decoders, decoderRegistry());
   std::vector<gd::DecoderLaneModel> decoderLanes;
   decoderLanes.reserve(decoderCount);
   std::vector<double> decoderHeights(decoderCount, 0.0);
   for (std::size_t d = 0; d < decoderCount; ++d) {
-    const gd::DecoderConfig& config = ui.decoders[d];
     gd::DecoderLaneModelInput laneInput;
-    laneInput.config = &config;
     laneInput.store = &ui.decoderAnnotations;
     laneInput.index = d;
     laneInput.labels = &ui.laneLabels.at(d);
-    laneInput.registry = &decoderRegistry();
     laneInput.capture = ui.laneView ? &*ui.laneView : nullptr;
     laneInput.showDerived = showDerivedRows_;
-    laneInput.stripOpen = [&](std::uint32_t row) { return waveform->openRowStrips.contains({config.id(), row}); };
-    laneInput.stripItemWidth = stripItemWidth;
-    laneInput.metrics = gd::RowStripMetrics{decoderPitch, stripWidth, stripGap, stripLinePitch, stripPadding};
+    laneInput.rowPitch = decoderPitch;
     decoderLanes.push_back(gd::decoderLaneModel(laneInput));
     decoderHeights[d] = decoderLanes[d].height;
   }
@@ -751,6 +773,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     viewport.clampToLimits(viewTotal);
   }
   waveform->lastTotal = total;
+  const std::uint64_t firstShownSample =
+    static_cast<std::uint64_t>((std::max)(0.0, std::floor(viewport.firstVisibleSample())));
+  const std::optional<gd::FindMatch> findReveal = updateFind(ui, allLanes, decoderLanes, firstShownSample);
+  if (findReveal) {
+    wv::panToShow(viewport, findReveal->begin, findReveal->end, viewTotal);
+  }
   const ImRect scrollBar(ImVec2(traceLeft, origin.y + rulerHeight + lanesHeight),
                          ImVec2(traceLeft + traceWidth, origin.y + rulerHeight + lanesHeight + scrollbarHeight));
   const ImGuiID scrollBarId = ImGui::GetID("hscroll");
@@ -842,8 +870,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
   }
   if (rulerActive && ImGui::IsMousePosValid()) {
     if (waveform->draggedMarker) {
-      waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, rulerMouseX, total));
-      ui.capture.markViewEdited();
+      if (waveform->rulerPressDragged || ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, rulerMouseX, total));
+        ui.capture.markViewEdited();
+      }
     } else if (waveform->draggedCursorPair) {
       const std::int64_t delta = wv::pairDragDeltaSamples(viewport, waveform->pairPressPixelX, rulerMouseX);
       waveform->cursors = wv::movePairBySampleDelta(waveform->pairPressCursors, delta, total);
@@ -934,8 +964,17 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     // Drawn in the lanes child with an unclipped rect: a child's draw list is painted after the ruler's.
     const float flagBottomY = cursorFlagRect(0.0f, flagTop, em).Max.y;
     // WHY: Clamp scroll against THIS frame content: ImGui clamps against the last one, so hidden lanes land off view.
-    const float laneScroll = static_cast<float>(
+    float laneScroll = static_cast<float>(
       wv::laneScrollInRange(ImGui::GetScrollY(), contentHeight, lanesHeight));
+    if (findReveal && findReveal->decoder < decoderCount) {
+      const gd::DecoderLaneModel& revealLane = decoderLanes[findReveal->decoder];
+      if (const std::optional<double> rowTop =
+            gd::findRowScrollTop(laneDisplay, findReveal->decoder, gd::shownRowSlot(revealLane.rows, findReveal->row),
+                                 decoderPitch)) {
+        laneScroll = static_cast<float>(std::clamp(
+          wv::scrollToShowRow(laneScroll, regions.scrollHeight, *rowTop, decoderPitch), 0.0, regions.maxScroll));
+      }
+    }
     if (laneScroll != ImGui::GetScrollY()) {
       ImGui::SetScrollY(laneScroll);
     }
@@ -1022,10 +1061,8 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const auto decoderRowHeaderLine = [&](std::size_t d, const std::string& laneLabel, std::size_t slot) {
       const gd::DecoderLaneModel& laneRows = decoderLanes[d];
       const decode::AnnotationRow& row = laneRows.rows[slot];
-      const gd::DecoderConfig& config = ui.decoders[d];
       const gd::DecoderLaneState state = ui.decoderAnnotations.state(d);
-      RowHeaderLine line{wv::decoderRowHeader(laneLabel, row.name, laneRows.rows.size()),
-                         wv::rowHidden(config.visibility(), row.id) ? mutedColor : textColor};
+      RowHeaderLine line{wv::decoderRowHeader(laneLabel, row.name, laneRows.rows.size()), textColor};
       if (slot != 0) return line;
       const gd::LaneProgress* progress = ui.decoderAnnotations.progress(d);
       const wv::LaneStatus status = wv::decoderLaneStatus(
@@ -1062,7 +1099,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const auto decoderSizesOf = [&](std::size_t d, const std::string& laneLabel, double columnRight) {
       const gd::DecoderLaneModel& laneRows = decoderLanes[d];
       wv::DecoderHeaderSizes sizes;
-      sizes.rowHeight = laneRows.spaces.empty() ? decoderPitch : static_cast<double>(laneRows.spaces[0].band);
+      sizes.rowHeight = decoderPitch;
       sizes.em = em;
       sizes.indent = style.ItemSpacing.x;
       sizes.box = chipHeight;
@@ -1070,8 +1107,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       sizes.nameText = ImGui::CalcTextSize(decoderBarText(d).c_str()).x;
       sizes.namePadding = namePad;
       sizes.zoneGap = style.ItemSpacing.x;
-      sizes.triangle = rowTriangle;
-      sizes.triangleGap = std::round(em * 0.35f);
       sizes.columnRight = columnRight;
       for (std::size_t slot = 0; slot < laneRows.rows.size(); ++slot) {
         sizes.widestRowText =
@@ -1092,9 +1127,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const auto decoderRowPlaceOf = [&](std::size_t d) {
       const wv::DecoderHeaderSizes& sizes = decoderSizesAt(d);
       return wv::decoderRowPlace(sizes, wv::decoderHeaderLayout(sizes));
-    };
-    const auto visibleRowTriangle = [&](double triangleX) {
-      return wv::clipToHeaderColumn({triangleX, triangleX + rowTriangle}, static_cast<double>(nameRight - origin.x));
     };
     const auto failureTooltip = [&](std::size_t d) {
       ImGui::BeginTooltip();
@@ -1130,8 +1162,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         metrics.indent = itemSpacing;
         const wv::DecoderHeaderSizes wholeSizes = decoderSizesOf(d, laneLabel, 1.0e9);
         metrics.leftZone = wv::decoderHeaderLayout(wholeSizes).leftZone + wholeSizes.zoneGap;
-        metrics.triangle = rowTriangle;
-        metrics.triangleGap = std::round(em * 0.35f);
         metrics.textGap = nameGap;
         metrics.pin = pinWidth;
         metrics.pinGap = itemSpacing * 0.5;
@@ -1257,29 +1287,14 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const ImVec4 accentRgba = ImGui::ColorConvertU32ToFloat4(accent);
     const auto channel8 = [](float v) { return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
     const wv::Rgb8 neutralFill{channel8(accentRgba.x), channel8(accentRgba.y), channel8(accentRgba.z)};
-    const auto drawRowTriangle = [&](ImVec2 triMin, bool open, ImU32 color) {
-      const float s = rowTriangle;
-      if (open) {
-        draw->AddTriangleFilled(ImVec2(triMin.x, triMin.y + s * 0.2f), ImVec2(triMin.x + s, triMin.y + s * 0.2f),
-                                ImVec2(triMin.x + s * 0.5f, triMin.y + s * 0.85f), color);
-      } else {
-        draw->AddTriangleFilled(ImVec2(triMin.x + s * 0.2f, triMin.y), ImVec2(triMin.x + s * 0.85f, triMin.y + s * 0.5f),
-                                ImVec2(triMin.x + s * 0.2f, triMin.y + s), color);
-      }
-    };
-    std::vector<wv::YInterval> stripBands;
     for (const ShownLane& shown : shownLanes) {
       if (shown.lane.key.kind != wv::LaneKind::Decoder) {
         continue;
       }
       const std::size_t d = shown.lane.source;
       gd::DecoderConfig& config = ui.decoders[d];
-      const gd::DecoderLaneModel& lane = decoderLanes[d];
-      const LaneClip stripClip(ImVec2(origin.x, shown.clipTop), ImVec2(traceLeft + traceWidth, shown.clipBottom));
       ImGui::PushID(laneWidgetId("rows", shown.lane.key).c_str());
-      std::optional<std::vector<wv::ClassFill>> fills;
       const wv::DecoderHeaderLayout header = decoderHeaderOf(d);
-      const wv::DecoderRowPlace place = decoderRowPlaceOf(d);
       {
         const LaneClip pairClip(ImVec2(origin.x, shown.clipTop), ImVec2(nameRight, shown.clipBottom));
         ImGui::SetCursorScreenPos(ImVec2(origin.x + static_cast<float>(header.square.x),
@@ -1308,124 +1323,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           }
         }
       }
-      float rowTop = shown.top;
-      for (std::size_t slot = 0; slot < lane.rows.size(); ++slot) {
-        const decode::AnnotationRow& row = lane.rows[slot];
-        const wv::DecoderRowSpace& space = lane.spaces[slot];
-        const float band = static_cast<float>(space.band);
-        const bool rowIsHidden = wv::rowHidden(config.visibility(), row.id);
-        const bool open = lane.strips[slot].has_value();
-        ImGui::PushID(static_cast<int>(row.id));
-        const ImVec2 triMin(origin.x + static_cast<float>(place.triangleX),
-                            rowTop + std::floor((band - rowTriangle) * 0.5f));
-        if (const std::optional<wv::HeaderSpan> triangleSpan = visibleRowTriangle(place.triangleX)) {
-          const LaneClip triangleClip(ImVec2(origin.x + static_cast<float>(triangleSpan->left), shown.clipTop),
-                                      ImVec2(origin.x + static_cast<float>(triangleSpan->right), shown.clipBottom));
-          ImGui::SetCursorScreenPos(triMin);
-          if (headerControl(shown, ImGui::InvisibleButton("##triangle", ImVec2(rowTriangle, rowTriangle)))) {
-            const std::pair<std::string, std::uint32_t> key{config.id(), row.id};
-            if (open) {
-              waveform->openRowStrips.erase(key);
-            } else {
-              waveform->openRowStrips.insert(key);
-            }
-          }
-          if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", open ? tr("Close row settings") : tr("Open row settings"));
-          }
-          drawRowTriangle(triMin, open, rowIsHidden ? mutedColor : textColor);
-        }
-        if (open) {
-          const gd::DecoderRowStrip& strip = *lane.strips[slot];
-          const ImVec2 stripMin(origin.x, rowTop + band);
-          const ImVec2 stripMax(traceLeft + traceWidth, rowTop + static_cast<float>(space.height()));
-          stripBands.push_back({static_cast<double>((std::max)(stripMin.y, shown.clipTop)),
-                                static_cast<double>((std::min)(stripMax.y, shown.clipBottom))});
-          fillPixels(draw, stripMin, stripMax, ImGui::GetColorU32(ImGuiCol_PopupBg));
-          draw->AddRect(stripMin, stripMax, withAlpha(mutedColor, 0.5f));
-          const auto lineY = [&](std::size_t line) {
-            return stripMin.y + stripPadding + static_cast<float>(line) * stripLinePitch +
-                   std::floor((stripLinePitch - ImGui::GetFrameHeight()) * 0.5f);
-          };
-          ImGui::SetCursorScreenPos(ImVec2(stripMin.x + stripPadding, lineY(0)));
-          bool rowShown = !rowIsHidden;
-          if (ImGui::Checkbox(tr("Show this row"), &rowShown) && wv::setRowHidden(config.visibility(), row.id, !rowShown)) {
-            ui.capture.markViewEdited();
-          }
-          std::vector<std::uint32_t> classIds;
-          for (const wv::StripClass& cls : strip.classes) classIds.push_back(cls.id);
-          ImGui::SameLine(0.0f, stripGap);
-          if (ImGui::Button(tr("Show all")) && wv::setClassesHidden(config.visibility(), row.id, classIds, false)) {
-            ui.capture.markViewEdited();
-          }
-          ImGui::SameLine();
-          if (ImGui::Button(tr("Hide all")) && wv::setClassesHidden(config.visibility(), row.id, classIds, true)) {
-            ui.capture.markViewEdited();
-          }
-          if (strip.layout.formatLine) {
-            ImGui::SetCursorScreenPos(ImVec2(stripMin.x + stripPadding, lineY(*strip.layout.formatLine)));
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(tr("Format:"));
-            const decode::DataFormat current = config.rowDataFormat(row.id);
-            for (const decode::DataFormat choice : kDataFormats) {
-              ImGui::SameLine(0.0f, stripGap);
-              if (ImGui::RadioButton(dataFormatLabel(choice), current == choice) &&
-                  config.setRowDataFormat(row.id, choice)) {
-                ui.capture.markDecodersEdited();
-              }
-            }
-          }
-          if (!strip.classes.empty() && !fills) {
-            const gd::ShownResult* drawnResult = lane.shown;
-            const std::vector<wv::RowClass> pairs =
-              drawnResult != nullptr ? wv::laneRowClassPairs(drawnResult->annotations->groups(), lane.derivation.rows)
-                                     : std::vector<wv::RowClass>{};
-            fills = wv::annotationClassFills(
-              lane.rows, pairs,
-              drawnResult != nullptr ? drawnResult->format.classes
-                                     : gd::laneFormatContext(ui.decoderAnnotations, d, config, decoderRegistry()).classes,
-              config.classColors(), dark, neutralFill);
-          }
-          for (std::size_t i = 0; i < strip.classes.size() && i < strip.layout.classItems.size(); ++i) {
-            const wv::StripClass& cls = strip.classes[i];
-            const wv::StripItem& item = strip.layout.classItems[i];
-            ImGui::PushID(static_cast<int>(cls.id));
-            ImGui::SetCursorScreenPos(ImVec2(stripMin.x + static_cast<float>(item.x), lineY(item.line)));
-            const ImVec4 swatch =
-              ImGui::ColorConvertU32ToFloat4(color32(wv::classFill(*fills, row.id, cls.id, neutralFill)));
-            if (ImGui::ColorButton("##swatch", swatch, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoAlpha,
-                                   ImVec2(stripSwatch, stripSwatch))) {
-              waveform->classColorTarget = gd::ClassColorTarget{config.id(), row.id, cls.id};
-              loadColorDraft(waveform->colorDraft, config.classColor(row.id, cls.id));
-              gui_popup::open("class_color_picker", popupOwner);
-            }
-            if (ImGui::IsItemHovered()) {
-              ImGui::SetTooltip("%s", tr("Choose class color"));
-            }
-            ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
-            bool classShown = !wv::classHidden(config.visibility(), row.id, cls.id);
-            if (ImGui::Checkbox(cls.name.c_str(), &classShown) &&
-                wv::setClassHidden(config.visibility(), row.id, cls.id, !classShown)) {
-              ui.capture.markViewEdited();
-            }
-            ImGui::PopID();
-          }
-          ImGui::SetCursorScreenPos(stripMin);
-          ImGui::InvisibleButton("##strip", ImVec2((std::max)(1.0f, stripMax.x - stripMin.x),
-                                                   (std::max)(1.0f, stripMax.y - stripMin.y)));
-        }
-        ImGui::PopID();
-        rowTop += static_cast<float>(space.height());
-      }
       ImGui::PopID();
     }
 
     BITOSCOPE_DRAW_PART_NEXT(waveformPart, Prologue);
     const auto verticalLine = [&](float x, float top, float bottom, ImU32 color, float thickness) {
-      for (const wv::YInterval& piece : wv::cutStrips({top, bottom}, stripBands)) {
-        draw->AddLine(ImVec2(x, static_cast<float>(piece.top)), ImVec2(x, static_cast<float>(piece.bottom)), color,
-                      thickness);
-      }
+      draw->AddLine(ImVec2(x, top), ImVec2(x, bottom), color, thickness);
     };
 
     {
@@ -1506,8 +1409,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     }
     if (tracesActive && pointerValid) {
       if (waveform->draggedMarker) {
-        waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, mouseX, total));
-        ui.capture.markViewEdited();
+        if (waveform->tracesPressDragged) {
+          waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, mouseX, total));
+          ui.capture.markViewEdited();
+        }
       } else if (waveform->draggedCursorPair) {
         const std::int64_t delta = wv::pairDragDeltaSamples(viewport, waveform->pairPressPixelX, mouseX);
         waveform->cursors = wv::movePairBySampleDelta(waveform->pairPressCursors, delta, total);
@@ -1577,7 +1482,8 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       wv::applyWheel(viewport, wv::wheelAction(io.MouseWheel, io.MouseWheelH, modifiers(io)), mouseX, viewTotal);
     }
     const bool keysFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    if ((keysFocused || tracesHovered || rulerHovered) && !io.WantTextInput && !ImGui::IsAnyItemActive()) {
+    if ((keysFocused || tracesHovered || rulerHovered) && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
+        !waveform->find.ownsKeys()) {
       const double anchor = (tracesHovered || rulerHovered) ? static_cast<double>(io.MousePos.x - traceLeft)
                                                             : viewport.widthPixels() * 0.5;
       for (const KeyBinding& key : kKeys) {
@@ -1635,13 +1541,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         const gd::DecoderConfig& config = ui.decoders[d];
         std::vector<float> rowTops(rowCount);
         for (std::size_t slot = 0; slot < rowCount; ++slot) {
-          rowTops[slot] = slot == 0 ? top : rowTops[slot - 1] + static_cast<float>(laneRows.spaces[slot - 1].height());
+          rowTops[slot] = top + static_cast<float>(slot) * decoderPitch;
         }
         const auto rowBandTop = [&](std::size_t slot) { return rowTops[slot]; };
         const auto rowBandBottom = [&](std::size_t slot) {
-          return rowTops[slot] + static_cast<float>(laneRows.spaces[slot].band);
+          return rowTops[slot] + decoderPitch;
         };
-        const auto rowShown = [&](std::size_t slot) { return !wv::rowHidden(config.visibility(), rows[slot].id); };
         const LaneClip laneClip(ImVec2(origin.x, shown.clipTop), ImVec2(traceLeft + traceWidth, shown.clipBottom));
         for (std::size_t slot = 0; slot < rowCount; ++slot) {
           fillPixels(draw, ImVec2(origin.x, rowBandTop(slot)), ImVec2(traceLeft + traceWidth, rowBandBottom(slot)),
@@ -1663,7 +1568,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
 
         const gd::DecoderLaneState state = ui.decoderAnnotations.state(d);
         const std::string& laneLabel = ui.laneLabels.at(d).laneLabel;
-        const float firstBand = static_cast<float>(laneRows.spaces.empty() ? decoderPitch : laneRows.spaces[0].band);
+        const float firstBand = decoderPitch;
         if (!floating) {
           laneNameHandle(shown);
           lanePinButton(shown, top + (firstBand - pinHeight) * 0.5f);
@@ -1725,22 +1630,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         }
         for (std::size_t slot = 0; slot < rowCount; ++slot) {
           const RowHeaderLine headerLine = decoderRowHeaderLine(d, laneLabel, slot);
-          const float band = static_cast<float>(laneRows.spaces[slot].band);
           draw->PushClipRect(ImVec2(origin.x, rowBandTop(slot)), ImVec2(nameRight, rowBandBottom(slot)), true);
-          draw->AddText(ImVec2(origin.x + static_cast<float>(place.textX), rowBandTop(slot) + (band - em) * 0.5f),
+          draw->AddText(ImVec2(origin.x + static_cast<float>(place.textX), rowBandTop(slot) + (decoderPitch - em) * 0.5f),
                         headerLine.color, headerLine.text.c_str());
           draw->PopClipRect();
-          if (floating) {
-            if (const std::optional<wv::HeaderSpan> triangleSpan = visibleRowTriangle(place.triangleX)) {
-              const bool rowIsHidden = !rowShown(slot);
-              draw->PushClipRect(ImVec2(origin.x + static_cast<float>(triangleSpan->left), rowBandTop(slot)),
-                                 ImVec2(origin.x + static_cast<float>(triangleSpan->right), rowBandBottom(slot)), true);
-              drawRowTriangle(ImVec2(origin.x + static_cast<float>(place.triangleX),
-                                     rowBandTop(slot) + std::floor((band - rowTriangle) * 0.5f)),
-                              laneRows.strips[slot].has_value(), rowIsHidden ? mutedColor : textColor);
-              draw->PopClipRect();
-            }
-          }
         }
 
         const gd::ShownResult* drawnResult = laneRows.shown;
@@ -1770,9 +1663,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         pictureSources.geometry.traceLeft = traceLeft;
         pictureSources.geometry.traceRight = traceLeft + traceWidth;
         pictureSources.geometry.rowTops = rowTops;
-        for (const wv::DecoderRowSpace& space : laneRows.spaces) {
-          pictureSources.geometry.rowBands.push_back(static_cast<float>(space.band));
-        }
         pictureSources.style.em = em;
         pictureSources.style.decoderPitch = decoderPitch;
         pictureSources.style.lineWidth = lineWidth;
@@ -1792,9 +1682,25 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         draw->PushClipRect(ImVec2(traceLeft, laneTop), ImVec2(traceLeft + traceWidth, laneBottom), true);
         emitLanePicture(draw, picture);
         draw->PopClipRect();
-        const auto hit = wv::decoderRowHitAtY(io.MousePos.y, top, laneRows.spaces);
-        const std::optional<std::size_t> hoverSlot =
-          hit && !hit->inStrip && rowShown(hit->slot) ? std::optional<std::size_t>(hit->slot) : std::nullopt;
+        if (!floating) {
+          FindMarkLane marks;
+          marks.decoder = static_cast<std::uint32_t>(d);
+          marks.rows = rows;
+          marks.top = top;
+          marks.rowPitch = decoderPitch;
+          marks.clipMin = ImVec2(traceLeft, laneTop);
+          marks.clipMax = ImVec2(traceLeft + traceWidth, laneBottom);
+          marks.firstSample = static_cast<std::uint64_t>((std::max)(0.0, std::floor(laneFirstSample)));
+          marks.endSample = static_cast<std::uint64_t>(
+            (std::max)(0.0, std::ceil(annotationColumns.pixelToSample(static_cast<double>(columnCount))) + 1.0));
+          marks.samplesPerPixel = laneSamplesPerPixel * static_cast<double>(framebufferScale);
+          marks.sampleX = [&](std::uint64_t sample) { return columnX(sample); };
+          marks.color = selectionColor;
+          marks.frameWidth = selectionFrameWidth;
+          marks.minWidth = 2.0f * lineWidth;
+          drawFindMarks(draw, waveform->find, marks);
+        }
+        const std::optional<std::size_t> hoverSlot = wv::decoderRowAtY(io.MousePos.y, top, decoderPitch, rowCount);
         if (!floating && tracesHovered && !tracesActive && !laneDragging && ImGui::IsMousePosValid() &&
             io.MousePos.y >= laneTop && io.MousePos.y < laneBottom && hoverSlot && laneRows.takesFormat[*hoverSlot] &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -1819,7 +1725,19 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
             const std::string list =
               laneText.listsWords(a) ? laneText.wordList(a, kTooltipWordListChars) : std::string();
             if (list.empty()) {
-              ImGui::SetTooltip("%s", laneText.text(a).c_str());
+              const gd::ValueBytes valueBytes = showByteValues_
+                                                  ? gd::bytesFrom(*drawnResult, rows[*hoverSlot].id, a,
+                                                                  gd::kMaxValueBytes)
+                                                  : gd::ValueBytes{};
+              const std::vector<gd::ByteValueLine> valueLines = gd::byteValueLines(valueBytes.span());
+              if (valueLines.empty()) {
+                ImGui::SetTooltip("%s", laneText.text(a).c_str());
+              } else {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(laneText.text(a).c_str());
+                drawByteValueLines(valueLines, em);
+                ImGui::EndTooltip();
+              }
             } else {
               ImGui::BeginTooltip();
               ImGui::PushTextWrapPos(em * 30.0f);
@@ -1829,12 +1747,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
             }
           }
         }
-        if (!floating && hit && !hit->inStrip && ImGui::GetActiveID() == 0 &&
+        if (!floating && hoverSlot && ImGui::GetActiveID() == 0 &&
             !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
             ImGui::GetHoveredID() == ImGui::GetID(laneWidgetId("name", shown.lane.key).c_str()) &&
             io.MousePos.x < traceLeft) {
-          const std::string* note = gd::derivationNote(laneRows.derivation, rows[hit->slot].id);
-          const std::string& failure = hit->slot < rowLayouts.size() ? rowLayouts[hit->slot].failure : std::string();
+          const std::string* note = gd::derivationNote(laneRows.derivation, rows[*hoverSlot].id);
+          const std::string& failure = *hoverSlot < rowLayouts.size() ? rowLayouts[*hoverSlot].failure : std::string();
           const std::string& reason = note != nullptr ? *note : failure;
           if (!reason.empty()) {
             ImGui::BeginTooltip();
@@ -2025,10 +1943,8 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     if (waveform->showCursors && waveform->cursors) {
       const float x1 = columnX(waveform->cursors->first());
       const float x2 = columnX(waveform->cursors->second());
-      for (const wv::YInterval& piece : wv::cutStrips({visibleTop, visibleBottom}, stripBands)) {
-        fillPixels(draw, ImVec2((std::min)(x1, x2), static_cast<float>(piece.top)),
-                            ImVec2((std::max)(x1, x2), static_cast<float>(piece.bottom)), withAlpha(accent, 0.10f));
-      }
+      fillPixels(draw, ImVec2((std::min)(x1, x2), visibleTop), ImVec2((std::max)(x1, x2), visibleBottom),
+                 withAlpha(accent, 0.10f));
       draw->PushClipRect(ImVec2(traceLeft, origin.y), ImVec2(traceLeft + traceWidth, visibleBottom),
                         kIntersectWithCurrentClipRect);
       verticalLine(x1, flagBottomY + 0.5f, visibleBottom, accent, lineWidth);
@@ -2054,6 +1970,19 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           continue;
         }
         verticalLine(x, flagBottomY + 0.5f, visibleBottom, markerLineColor, lineWidth);
+      }
+      draw->PopClipRect();
+    }
+
+    if (showPointerLine_ && tracesHovered && !laneDragging && ImGui::IsMousePosValid()) {
+      const float dotLength = 2.0f * lineWidth;
+      const float pointerX = std::floor(io.MousePos.x * framebufferScale) / framebufferScale;
+      const ImU32 pointerColor = withAlpha(textColor, 0.6f);
+      draw->PushClipRect(ImVec2(traceLeft, origin.y), ImVec2(traceLeft + traceWidth, visibleBottom),
+                        kIntersectWithCurrentClipRect);
+      for (float y = flagBottomY; y < visibleBottom; y += 2.0f * dotLength) {
+        fillPixels(draw, ImVec2(pointerX, y), ImVec2(pointerX + lineWidth, (std::min)(y + dotLength, visibleBottom)),
+                   pointerColor);
       }
       draw->PopClipRect();
     }
@@ -2138,10 +2067,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         }
         return wv::BracketLane{false};
       };
-      const auto decoderAnchor = [&](std::size_t d) {
-        const std::vector<wv::DecoderRowSpace>& spaces = decoderLanes[d].spaces;
-        return (spaces.empty() ? decoderPitch : static_cast<float>(spaces[0].band)) * 0.5f;
-      };
+      const float decoderAnchor = decoderPitch * 0.5f;
       const float thickness = 2.0f * lineWidth;
       const auto snap = [&](float v) { return std::round(v * framebufferScale) / framebufferScale; };
       draw->PushClipRect(ImVec2(static_cast<float>(gutter.left), visibleTop), ImVec2(origin.x, visibleBottom), false);
@@ -2152,9 +2078,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           reads.push_back(placed(wv::LaneKey{wv::LaneKind::Channel, device}, channelAnchor));
         }
         for (const std::size_t lower : decoderReads[d].decoders) {
-          reads.push_back(placed(wv::LaneKey{wv::LaneKind::Decoder, static_cast<std::uint32_t>(lower)}, decoderAnchor(lower)));
+          reads.push_back(placed(wv::LaneKey{wv::LaneKind::Decoder, static_cast<std::uint32_t>(lower)}, decoderAnchor));
         }
-        const wv::BracketLane own = placed(wv::LaneKey{wv::LaneKind::Decoder, static_cast<std::uint32_t>(d)}, decoderAnchor(d));
+        const wv::BracketLane own = placed(wv::LaneKey{wv::LaneKind::Decoder, static_cast<std::uint32_t>(d)}, decoderAnchor);
         const std::optional<wv::ColorChoice>& choice = ui.decoders[d].color();
         const ImU32 ink = choice ? color32(wv::outlineColorFor(*choice, dark)) : textColor;
         for (const wv::BracketSegment& segment : wv::bracketSegments(own, reads, *bracketSlotOf[d], gutter, gutterClip)) {
@@ -2286,10 +2212,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           if (shown.lane.key.kind == wv::LaneKind::Decoder) {
             const gd::DecoderLaneModel& lane = decoderLanes[shown.lane.source];
             const gd::DecoderConfig& config = ui.decoders[shown.lane.source];
-            const auto hit = wv::decoderRowHitAtY(io.MousePos.y, shown.top, lane.spaces);
-            if (hit && !hit->inStrip && lane.takesFormat[hit->slot] &&
-                !wv::rowHidden(config.visibility(), lane.rows[hit->slot].id)) {
-              waveform->rowFormatTarget = std::pair{config.id(), lane.rows[hit->slot].id};
+            const auto hit = wv::decoderRowAtY(io.MousePos.y, shown.top, decoderPitch, lane.rows.size());
+            if (hit && lane.takesFormat[*hit]) {
+              waveform->rowFormatTarget = std::pair{config.id(), lane.rows[*hit].id};
             }
           }
           gui_popup::open("lane_header_menu", popupOwner);
@@ -2299,6 +2224,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     }
   }
   ImGui::EndChild();
+  drawFindBox(*waveform, traceLeft + traceWidth, origin.y + rulerHeight, dark);
 
   ImDrawList* draw = ImGui::GetWindowDrawList();
   const ImVec2 rulerMin(traceLeft, origin.y);
@@ -2424,9 +2350,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
   if (gui_popup::begin("marker_context", popupOwner)) {
     if (waveform->contextMarker) {
       const wv::MarkerId id = *waveform->contextMarker;
-      if (ImGui::MenuItem(tr("Rename"))) {
-        openMarkerRename(*waveform, id, popupOwner);
-      }
       if (ImGui::MenuItem(tr("Delete"))) {
         waveform->markers.remove(id);
         waveform->contextMarker.reset();
@@ -2434,6 +2357,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         if (waveform->selectedMarker == id) {
           waveform->selectedMarker.reset();
         }
+      }
+      if (ImGui::MenuItem(tr("Rename"))) {
+        openMarkerRename(*waveform, id, popupOwner);
       }
     }
     ImGui::EndPopup();
@@ -2501,29 +2427,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       applyDecoderSettingsChange(sessionId, ui, change);
     } else {
       ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndPopup();
-  }
-  if (gui_popup::begin("class_color_picker", popupOwner)) {
-    const bool known = waveform->classColorTarget &&
-                       std::ranges::any_of(ui.decoders, [&](const gd::DecoderConfig& candidate) {
-                         return candidate.id() == waveform->classColorTarget->decoderId;
-                       });
-    if (known) {
-      const gd::ClassColorTarget target = *waveform->classColorTarget;
-      ImGui::TextUnformatted(tr("Class color"));
-      const bool clickedReset = colorChoiceBody(
-        [&](wv::ColorChoice choice) {
-          if (gd::setTargetClassColor(ui.decoders, target, choice)) {
-            ui.capture.markDecodersEdited();
-          }
-        },
-        gd::targetClassColor(ui.decoders, target).has_value(), "class_color/reset",
-        tr("Restore default color of class"));
-      if (clickedReset && gd::setTargetClassColor(ui.decoders, target, std::nullopt)) {
-        ui.capture.markDecodersEdited();
-        ImGui::CloseCurrentPopup();
-      }
     }
     ImGui::EndPopup();
   }

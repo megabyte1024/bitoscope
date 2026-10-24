@@ -5,6 +5,7 @@
 #pragma once
 
 #include <span>
+#include <vector>
 
 namespace bitoscope::gui_format {
 
@@ -17,5 +18,7 @@ PropertyTreeColumns propertyTreeColumns(std::span<const float> labelWidths, floa
                                          float availableWidth, float minControlWidth);
 
 int buttonsPerRow(float availableWidth, float buttonSize, float gap);
+
+std::vector<int> buttonRows(std::span<const float> buttonWidths, float gap, float availableWidth);
 
 }

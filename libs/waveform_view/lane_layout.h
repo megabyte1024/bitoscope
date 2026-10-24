@@ -27,9 +27,6 @@ double decoderLaneHeight(std::size_t shownRows, double rowPitch);
 
 std::optional<std::size_t> decoderRowAtY(double y, double laneTop, double rowPitch, std::size_t shownRows);
 
-double decoderLaneHeight(std::span<const double> rowHeights, double rowPitch);
-std::optional<std::size_t> decoderRowAtY(double y, double laneTop, std::span<const double> rowHeights, double rowPitch);
-
 double stackedLaneTop(double stackTop, std::span<const double> laneHeights, std::size_t index);
 
 double stackedLanesHeight(std::span<const double> laneHeights);

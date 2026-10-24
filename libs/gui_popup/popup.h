@@ -30,4 +30,6 @@ bool begin(std::string_view name, ImGuiWindowFlags flags = ImGuiWindowFlags_None
 bool beginModal(std::string_view name, const char* title, bool* openFlag = nullptr,
                 ImGuiWindowFlags flags = ImGuiWindowFlags_None);
 
+bool rightAlignedButton(const char* label);
+
 }

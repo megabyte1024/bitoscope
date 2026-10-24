@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "waveform_source.h"
+
 namespace bitoscope::waveform_view {
 
 bool toggleChannelSelection(std::vector<bool>& selected, std::uint32_t channel) {
@@ -112,6 +114,18 @@ std::vector<std::uint32_t> lanesOfChannels(const std::vector<std::uint32_t>& lan
     }
   }
   return lanes;
+}
+
+std::vector<std::uint32_t> channelsWithPulses(const WaveformSource& source,
+                                              const std::vector<std::uint32_t>& laneDevice) {
+  std::vector<std::uint32_t> channels;
+  const std::uint32_t lanes = (std::min)(source.channelCount(), static_cast<std::uint32_t>(laneDevice.size()));
+  for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+    if (source.nextEdge(lane, 0).has_value()) {
+      channels.push_back(laneDevice[lane]);
+    }
+  }
+  return channels;
 }
 
 }

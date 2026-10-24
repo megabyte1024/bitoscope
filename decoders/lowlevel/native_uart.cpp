@@ -25,7 +25,7 @@ using plugin::ValueFormat;
 DecoderDeclaration NativeUart::declaration() const {
   DecoderDeclaration d;
   d.name = "uart";
-  d.version = "1.0.0";
+  d.version = "0.1.0";
   d.channels = {{"rx", "receive line", false, "RX"}, {"tx", "transmit line", false, "TX"}};
   d.options = {
       {"baudrate", "bits per second", OptionType::integer, "115200", {}, 1, 4'000'000'000, {}, "Baud rate"},
@@ -127,7 +127,7 @@ struct Frame {
   bool cutOff = false;
 };
 
-enum class Phase : uint8_t { seek, awaitStart, frame };
+enum class Phase : uint8_t { awaitIdle, seek, awaitStart, frame };
 
 struct Line {
   uint32_t row = 0;
@@ -137,6 +137,7 @@ struct Line {
   Phase phase = Phase::seek;
   uint32_t point = 0;
   uint64_t next = 0;
+  uint64_t lastEdge = 0;
   uint32_t ones = 0;
   Frame frame;
 };
@@ -154,7 +155,11 @@ class UartWalk {
   }
 
   void start(uint32_t levels) {
-    for (size_t i = 0; i < W; ++i) lines_[i].idle = (((levels >> i) & 1u) != 0) != lines_[i].invert;
+    for (size_t i = 0; i < W; ++i) {
+      Line& line = lines_[i];
+      line.idle = (((levels >> i) & 1u) != 0) != line.invert;
+      if (!line.idle) awaitIdle(line);
+    }
   }
 
   template <typename Change>
@@ -167,7 +172,12 @@ class UartWalk {
       if (!c.changed(i)) continue;
       Line& line = lines_[i];
       line.idle = c.after(i) != line.invert;
-      if (line.phase == Phase::awaitStart && !line.idle) begin(line, at);
+      line.lastEdge = at;
+      if (line.phase == Phase::awaitIdle && line.idle) {
+        line.phase = Phase::awaitStart;
+      } else if (line.phase == Phase::awaitStart && !line.idle) {
+        begin(line, at);
+      }
     }
     return true;
   }
@@ -176,6 +186,10 @@ class UartWalk {
     for (Line& line : lines_) {
       if (!advance(line, samples)) return;
       if (line.phase != Phase::frame) continue;
+      if (heldLowSinceFrameStart(line)) {
+        awaitIdle(line);
+        continue;
+      }
       line.frame.cutOff = line.frame.start + f_.halfBitBeforeEnd >= samples;
       line.frame.stopEnd = (std::min)(line.frame.start + f_.end, samples);
       if (!completed(line)) return;
@@ -195,6 +209,13 @@ class UartWalk {
   }
 
  private:
+  static bool heldLowSinceFrameStart(const Line& line) { return line.lastEdge <= line.frame.start; }
+
+  static void awaitIdle(Line& line) {
+    line.phase = Phase::awaitIdle;
+    line.next = UINT64_MAX;
+  }
+
   void begin(Line& line, uint64_t at) {
     line.phase = Phase::frame;
     line.point = 0;
@@ -219,6 +240,10 @@ class UartWalk {
       const bool mark = line.idle;
       Frame& frame = line.frame;
       if (k == lastPoint_) {
+        if (heldLowSinceFrameStart(line)) {
+          awaitIdle(line);
+          return true;
+        }
         frame.stopEnd = frame.start + f_.end;
         if (!completed(line)) return false;
         continue;

@@ -78,4 +78,13 @@ bool beginModal(std::string_view name, const char* title, bool* openFlag, ImGuiW
   return true;
 }
 
+bool rightAlignedButton(const char* label) {
+  const float width = ImGui::CalcTextSize(label, nullptr, true).x + 2.0f * ImGui::GetStyle().FramePadding.x;
+  const float free = ImGui::GetContentRegionAvail().x - width;
+  if (free > 0.0f) {
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + free);
+  }
+  return ImGui::Button(label);
+}
+
 }

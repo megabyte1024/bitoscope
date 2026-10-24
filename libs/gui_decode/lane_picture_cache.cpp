@@ -41,7 +41,7 @@ bool LanePictureKey::operator==(const LanePictureKey& other) const {
   return resultSerial == other.resultSerial && drawing == other.drawing && watermark == other.watermark &&
          derived == other.derived && captureSerial == other.captureSerial && visibility == other.visibility &&
          rows == other.rows && classes == other.classes && options == other.options &&
-         classColors == other.classColors && hexStyle == other.hexStyle && rowDataFormats == other.rowDataFormats &&
+         hexStyle == other.hexStyle && rowDataFormats == other.rowDataFormats &&
          rowSources == other.rowSources && fontSerial == other.fontSerial &&
          firstVisibleSample == other.firstVisibleSample && samplesPerPixel == other.samplesPerPixel &&
          columnCount == other.columnCount && geometry == other.geometry && style == other.style &&
@@ -63,7 +63,6 @@ LanePictureKey lanePictureKey(const LanePictureSources& sources) {
     key.classes = shown->format.classes;
     key.options = shown->format.options;
   }
-  key.classColors = sources.config->classColors();
   key.hexStyle = sources.hexStyle;
   key.rowDataFormats = sources.config->rowDataFormats();
   key.rowSources = sources.labels->rowSources;
@@ -90,7 +89,6 @@ wv::LanePictureInput lanePictureInput(const LanePictureSources& sources) {
   input.derived = &lane.derivation.rows;
   input.rows = lane.rows;
   input.visibility = &lane.visibility;
-  input.classColors = &sources.config->classColors();
   input.drawing = lane.drawing;
   input.watermark = sources.watermark;
   input.columns = sources.columns;

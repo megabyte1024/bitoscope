@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include <channel_choices.h>
 #include <channel_names.h>
 #include <decode_budget.h>
 #include <decoder_chain_config.h>
@@ -126,13 +127,8 @@ const decode::DecoderRegistry& GuiApp::decoderRegistry() const {
 }
 
 std::vector<gd::CapturedChannel> GuiApp::capturedChannelsFor(const SessionUi& ui) {
-  std::vector<gd::CapturedChannel> out;
-  out.reserve(ui.keptDeviceChannels.size());
-  for (std::uint32_t device : ui.keptDeviceChannels) {
-    // WHY: Use the channel's OWN name, not the user's: a decoder setup from a file may bind a channel by it.
-    out.push_back({device, gui_capture::channelDisplayName(ui.channelNames, device)});
-  }
-  return out;
+  constexpr std::size_t noDeviceChannels = 0;
+  return gd::bindableChannels(ui.keptDeviceChannels, noDeviceChannels, ui.channelNames);
 }
 
 GuiApp::SessionUi* GuiApp::decodeRunOwner(std::uint64_t run) {
@@ -323,7 +319,8 @@ bool GuiApp::drawDecoderPicker(SessionUi& ui) {
 
 GuiApp::DecoderChannelChoices GuiApp::decoderChannelChoices(const SessionUi& ui) {
   DecoderChannelChoices choices;
-  choices.captured = capturedChannelsFor(ui);
+  const std::size_t deviceChannels = ui.openedFrom.empty() && ui.settings ? ui.settings->channels.size() : 0;
+  choices.captured = gd::bindableChannels(ui.keptDeviceChannels, deviceChannels, ui.channelNames);
   choices.labels.push_back(tr("(none)"));
   for (const gd::CapturedChannel& c : choices.captured) {
     choices.labels.push_back(gui_capture::channelChoiceLabel(ui.channelUserNames, ui.channelNames, c.deviceChannel));
@@ -388,9 +385,13 @@ GuiApp::DecoderSettingsChange GuiApp::drawDecoderSettings(SessionUi& ui, std::si
       }
     }
     if (comboOf("##ch", choice, channels.labels)) {
-      config.setChannelBinding(spec.name, choice == 0 ? std::nullopt
-                                                      : std::optional<std::uint32_t>(
-                                                          channels.captured[static_cast<std::size_t>(choice) - 1].deviceChannel));
+      const std::optional<std::uint32_t> picked =
+        choice == 0 ? std::nullopt
+                    : std::optional<std::uint32_t>(channels.captured[static_cast<std::size_t>(choice) - 1].deviceChannel);
+      config.setChannelBinding(spec.name, picked);
+      if (picked && ui.openedFrom.empty() && ui.settings && !ui.capture.running()) {
+        gd::selectForNextCapture(ui.settings->channels, *picked);
+      }
       change.setup = true;
     }
     showFieldError(config.errorFor(gd::channelFieldKey(spec.name)), dark);
@@ -570,7 +571,6 @@ void GuiApp::drawDecodersProperties(SessionUi& ui) {
     added = drawDecoderPicker(ui);
   }
 
-  ImGui::BeginChild("##addedDecoders", ImVec2(0, 0), ImGuiChildFlags_None);
   for (std::size_t i = 0; i < ui.decoders.size(); ++i) {
     // WHY: Key open state by instance id, not index (a removal shifts indexes); '###' keeps state across label changes.
     const std::string idBefore = ui.decoders[i].id();
@@ -609,8 +609,6 @@ void GuiApp::drawDecodersProperties(SessionUi& ui) {
     ui.decoderAnnotations.removeDecoder(static_cast<std::size_t>(removeIndex));
     change.setup = true;
   }
-
-  ImGui::EndChild();
 
   change.setup = change.setup || added;
   if (!change.setup && !change.presentation) return;

@@ -116,6 +116,10 @@ struct Preferences {
 
   bool showBits = true;
 
+  bool showByteValues = true;
+
+  bool showPointerLine = true;
+
   waveform_view::PinSide lanePinSide = waveform_view::PinSide::Bottom;
 
   UnsavedCapturePolicy unsavedCapture = UnsavedCapturePolicy::Ask;

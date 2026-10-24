@@ -50,27 +50,4 @@ std::vector<std::string> decoderLaneKeys(std::span<const DecoderConfig> configs)
   return keys;
 }
 
-std::vector<waveform_view::DecoderVisibility> decoderVisibilities(std::span<const DecoderConfig> configs) {
-  std::vector<waveform_view::DecoderVisibility> all;
-  all.reserve(configs.size());
-  for (const DecoderConfig& config : configs) all.push_back(config.visibility());
-  return all;
-}
-
-std::expected<void, std::string> applyDecoderVisibility(std::span<DecoderConfig> configs, std::string_view text,
-                                                        const decode::DecoderRegistry& registry) {
-  for (DecoderConfig& config : configs) config.visibility() = {};
-  auto saved = waveform_view::parseDecoderVisibility(text);
-  if (!saved) return std::unexpected(std::move(saved.error()));
-  for (DecoderConfig& config : configs) {
-    const auto found = saved->find(config.id());
-    if (found == saved->end()) continue;
-    auto decoder = registry.create(config.decoderName());
-    if (!decoder) continue;
-    config.visibility() = waveform_view::declaredVisibility(found->second, (*decoder)->rows(),
-                                                            (*decoder)->annotationClasses());
-  }
-  return {};
-}
-
 }

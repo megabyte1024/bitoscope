@@ -38,6 +38,7 @@ Bitoscope is an open-source logic analyzer application.
 
 - Open file format (HDF5).
 - Support for additional functions of logic analyzers, such as built-in signal generators.
+- Search across the bytes of all decoders at once, as text or hex, and step through the matches.
 
 ## Prerequisites
 

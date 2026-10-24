@@ -16,6 +16,8 @@ add_library(bitoscope_gui_app STATIC
     app/color_popup.cpp
     app/color_popup.h
     app/decoder_panel.cpp
+    app/find_box.cpp
+    app/find_box.h
     app/gui_app.cpp
     app/gui_app.h
     app/panels.cpp
@@ -39,7 +41,8 @@ target_link_libraries(bitoscope_gui_app PUBLIC bitoscope_imgui bitoscope_svg_ras
     bitoscope_waveform_capture_source bitoscope_gui_waveform_frame bitoscope_gui_events
     bitoscope_gui_frame_pacing bitoscope_gui_devices
     bitoscope_gui_capture bitoscope_gui_properties bitoscope_gui_session_file bitoscope_gui_decode
-    bitoscope_gui_popup bitoscope_gui_lane_header bitoscope_gui_text_field bitoscope_gui_frame_probe)
+    bitoscope_gui_popup bitoscope_gui_dock_focus bitoscope_gui_lane_header bitoscope_gui_text_field
+    bitoscope_gui_frame_probe)
 if(BITOSCOPE_GUI_TEST_HOOK)
   target_compile_definitions(bitoscope_gui_app PRIVATE BITOSCOPE_GUI_TEST_HOOK)
 endif()

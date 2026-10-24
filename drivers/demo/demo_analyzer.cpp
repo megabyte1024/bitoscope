@@ -5,6 +5,7 @@
 #include "demo_analyzer.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <map>
 #include <memory>
@@ -66,6 +67,25 @@ std::expected<uint32_t, std::string> itemOf(const std::map<std::string, Property
   return it->second.enumIndex;
 }
 
+std::vector<bitoscope::plugin::ChannelPreset> demoChannelPresets() {
+  const std::array<std::string_view, sim::kDemoChannels> names{
+      "UART 115200 8N1", "UART 57600 8E1", "UART 38400 8N2",
+      "SPI A CS", "SPI A SCLK mode 0", "SPI A MOSI", "SPI A MISO",
+      "SPI B CS", "SPI B SCLK mode 3", "SPI B MOSI", "SPI B MISO",
+      "I2C 0 SCL", "I2C 0 SDA", "I2C 1 SCL", "I2C 1 SDA",
+      "Strobe 1024 us",
+      "Counter bit 0", "Counter bit 1", "Counter bit 2", "Counter bit 3",
+      "Counter bit 4", "Counter bit 5", "Counter bit 6", "Counter bit 7",
+      "PWM 12.5 %", "PWM 25 %", "PWM 50 %", "PWM 75 %",
+      "Clock 31.25 kHz", "Clock 15.625 kHz", "Clock 7.8125 kHz", "Clock 1.953125 kHz",
+  };
+  std::vector<bitoscope::plugin::ChannelPreset> presets;
+  for (uint32_t c = 0; c < sim::kDemoChannels; ++c) {
+    presets.push_back({c, bitoscope::display_text::displayText(names[c]), {}});
+  }
+  return presets;
+}
+
 }
 
 std::vector<PropertyNode> demoProperties() {
@@ -125,6 +145,7 @@ bitoscope::plugin::LogicAnalyzerInfo demoAnalyzerInfo() {
     info.sampleRatesMilliHz.push_back(mhz * 1'000'000ull * 1000);
   }
   info.properties = demoProperties();
+  info.channelPresets = demoChannelPresets();
   return info;
 }
 

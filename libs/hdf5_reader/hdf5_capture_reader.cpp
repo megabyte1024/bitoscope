@@ -6,7 +6,6 @@
 #include "hdf5_lock.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <format>
 #include <new>
@@ -38,6 +37,8 @@ using bitoscope::capture::SavedIntegerValue;
 using bitoscope::capture::SavedProperty;
 using bitoscope::host::WindowInfo;
 using bitoscope::host::WindowPool;
+
+constexpr uint32_t kFormatVersion = 4;
 
 std::unexpected<std::string> fail(std::string_view what) {
   return std::unexpected(std::format("HDF5: {}", what));
@@ -131,25 +132,6 @@ std::expected<std::string, std::string> readTextAttrChecked(hid_t obj, const cha
   auto text = readOptionalStringAttr(obj, name);
   if (!text) return fail(std::format("cannot read attribute '{}'", name));
   return *text;
-}
-
-constexpr std::array<uint8_t, 256> makeBitReverseTable() {
-  std::array<uint8_t, 256> table{};
-  for (uint32_t b = 0; b < 256; ++b) {
-    uint8_t v = static_cast<uint8_t>(b);
-    uint8_t r = 0;
-    for (int i = 0; i < 8; ++i) {
-      r = static_cast<uint8_t>((r << 1) | (v & 1));
-      v = static_cast<uint8_t>(v >> 1);
-    }
-    table[b] = r;
-  }
-  return table;
-}
-constexpr std::array<uint8_t, 256> kBitReverse = makeBitReverseTable();
-
-void reverseBits(std::span<uint8_t> bytes) {
-  for (uint8_t& b : bytes) b = kBitReverse[b];
 }
 
 struct ChannelEntry {
@@ -397,16 +379,6 @@ std::expected<bitoscope::capture::ViewState, std::string> readViewInner(hid_t de
       warnings.push_back(std::format("saved lane order is malformed and was dropped: view/lane_order: {}", text.error()));
     }
   }
-  if (attrExists(group.id(), "decoder_visibility")) {
-    auto text = readTextAttrChecked(group.id(), "decoder_visibility");
-    if (text) {
-      view.decoder_visibility = std::move(*text);
-    } else {
-      warnings.push_back(std::format(
-          "saved hidden decoder rows and classes are malformed and were dropped: view/decoder_visibility: {}",
-          text.error()));
-    }
-  }
 
   if (H5Lexists(group.id(), "markers", H5P_DEFAULT)) {
     Handle markers(H5Gopen2(group.id(), "markers", H5P_DEFAULT), H5Gclose);
@@ -494,8 +466,9 @@ std::expected<RequestFields, std::string> readRequestFields(hid_t group, uint64_
                                                              std::optional<uint64_t> origin,
                                                              std::optional<uint64_t> trigger) {
   RequestFields out;
-  auto requested = readScalarAttr<uint64_t>(group, "requested_sample_count", H5T_NATIVE_UINT64);
-  out.requested_samples = requested.value_or(stored_samples);
+  auto requested = requireScalarAttr<uint64_t>(group, "requested_sample_count", H5T_NATIVE_UINT64);
+  if (!requested) return std::unexpected(requested.error());
+  out.requested_samples = *requested;
 
   if (!triggered) return out;
 
@@ -509,22 +482,22 @@ std::expected<RequestFields, std::string> readRequestFields(hid_t group, uint64_
         pre_held));
   }
 
-  auto req_pre = readScalarAttr<uint64_t>(group, "requested_pre_trigger_sample_count", H5T_NATIVE_UINT64);
-  auto req_post = readScalarAttr<uint64_t>(group, "requested_post_trigger_sample_count", H5T_NATIVE_UINT64);
-  if (req_pre.has_value() != req_post.has_value()) {
-    return fail("triggered device names only one of its requested pre- and post-trigger counts");
-  }
-  auto held_post = readScalarAttr<uint64_t>(group, "post_trigger_sample_count", H5T_NATIVE_UINT64);
+  auto req_pre = requireScalarAttr<uint64_t>(group, "requested_pre_trigger_sample_count", H5T_NATIVE_UINT64);
+  if (!req_pre) return std::unexpected(req_pre.error());
+  auto req_post = requireScalarAttr<uint64_t>(group, "requested_post_trigger_sample_count", H5T_NATIVE_UINT64);
+  if (!req_post) return std::unexpected(req_post.error());
+  auto held_post = requireScalarAttr<uint64_t>(group, "post_trigger_sample_count", H5T_NATIVE_UINT64);
+  if (!held_post) return std::unexpected(held_post.error());
 
-  out.requested_pre_trigger_samples = req_pre.value_or(pre_held);
-  out.stored_post_trigger_samples = held_post.value_or(stored_samples - pre_held);
-  out.requested_post_trigger_samples = req_post.value_or(*out.stored_post_trigger_samples);
+  out.requested_pre_trigger_samples = *req_pre;
+  out.stored_post_trigger_samples = *held_post;
+  out.requested_post_trigger_samples = *req_post;
   return out;
 }
 
 std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntry>& channels,
                                                           uint64_t sample_rate_milli_hz,
-                                                          uint64_t stored_samples, bool lsb_first,
+                                                          uint64_t stored_samples,
                                                           const Hdf5ReaderOptions& options,
                                                           MemoryProbe& probe, BlockSource& blocks) {
   auto plan = makeCapturePlan(static_cast<uint32_t>(channels.size()), sample_rate_milli_hz,
@@ -599,7 +572,6 @@ std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntr
                   H5P_DEFAULT, dst.data()) < 0) {
         return fail(std::format("cannot read channel {} at byte {}", channels[c].index, byte_offset));
       }
-      if (!lsb_first) reverseBits(dst);
     }
 
     auto outcome = buffer.appendWindow(*lease, arena->growth);
@@ -621,20 +593,16 @@ std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntr
   return buffer;
 }
 
-std::expected<LoadedDevice, std::string> readDeviceGroup(hid_t group, bool lsb_first,
-                                                         bool has_session_fields,
-                                                         const Hdf5ReaderOptions& options,
+std::expected<LoadedDevice, std::string> readDeviceGroup(hid_t group, const Hdf5ReaderOptions& options,
                                                          MemoryProbe& probe, BlockSource& blocks) {
   LoadedDeviceMetadata meta;
 
-  if (has_session_fields) {
-    auto device = requireStringAttr(group, "device");
-    auto offset = requireScalarAttr<int64_t>(group, "alignment_offset_ps", H5T_NATIVE_INT64);
-    if (!device) return std::unexpected(device.error());
-    if (!offset) return std::unexpected(offset.error());
-    meta.device = *device;
-    meta.alignment_offset_ps = *offset;
-  }
+  auto device_name = requireStringAttr(group, "device");
+  auto offset = requireScalarAttr<int64_t>(group, "alignment_offset_ps", H5T_NATIVE_INT64);
+  if (!device_name) return std::unexpected(device_name.error());
+  if (!offset) return std::unexpected(offset.error());
+  meta.device = *device_name;
+  meta.alignment_offset_ps = *offset;
 
   auto rate = requireScalarAttr<uint64_t>(group, "sample_rate_milli_hz", H5T_NATIVE_UINT64);
   if (!rate || *rate == 0) return fail("missing or zero sample_rate_milli_hz");
@@ -669,11 +637,8 @@ std::expected<LoadedDevice, std::string> readDeviceGroup(hid_t group, bool lsb_f
   meta.stored_post_trigger_samples = request->stored_post_trigger_samples;
 
   meta.short_reason = readOptionalStringAttr(group, "short_reason");
-  if (has_session_fields) {
-    meta.memory_full_device = readScalarAttr<uint32_t>(group, "memory_full_device", H5T_NATIVE_UINT32);
-  }
+  meta.memory_full_device = readScalarAttr<uint32_t>(group, "memory_full_device", H5T_NATIVE_UINT32);
 
-  // WHY: Stored decoded results are never opened: decoders rerun on open, so a damaged one cannot refuse the file.
   auto decoder_setup = readDecoderSetup(group, meta.decoder_presentation, meta.decoder_versions);
   if (!decoder_setup) return std::unexpected(decoder_setup.error());
   meta.decoder_setup = std::move(*decoder_setup);
@@ -699,7 +664,7 @@ std::expected<LoadedDevice, std::string> readDeviceGroup(hid_t group, bool lsb_f
 
   meta.view = readView(group, *channel_count, meta.warnings);
 
-  auto buffer = buildBuffer(*channels, *rate, *stored, lsb_first, options, probe, blocks);
+  auto buffer = buildBuffer(*channels, *rate, *stored, options, probe, blocks);
   if (!buffer) return std::unexpected(buffer.error());
 
   LoadedDevice device{std::move(*buffer), std::move(meta)};
@@ -730,31 +695,18 @@ std::expected<LoadedSession, std::string> loadSession(const std::filesystem::pat
       return fail(std::format("'{}' is not bitoscope capture file: no format_version attribute",
                               native));
     }
-    if (*version == 0 || *version > 4) {
-      return fail(std::format(
-          "'{}' is format version {}, which this reader does not support (1 to 4)", native, *version));
+    if (*version != kFormatVersion) {
+      return fail(std::format("'{}' is format version {}, which this reader does not support (only {})", native,
+                              *version, kFormatVersion));
     }
-    const bool lsb_first = *version >= 4;
-    if (*version >= 4) {
-      auto bit_order = readOptionalStringAttr(file.id(), "bit_order");
-      if (!bit_order || *bit_order != "lsb-first") {
-        return fail(std::format(
-            "'{}' is format version {} but its bit_order attribute is missing or not 'lsb-first'",
-            native, *version));
-      }
+    auto bit_order = readOptionalStringAttr(file.id(), "bit_order");
+    if (!bit_order || *bit_order != "lsb-first") {
+      return fail(std::format("'{}' is format version {} but its bit_order attribute is missing or not 'lsb-first'",
+                              native, *version));
     }
 
     LoadedSession session;
     session.format_version = *version;
-
-    if (*version <= 2) {
-      constexpr bool hasSessionFields = false;
-      auto device = readDeviceGroup(file.id(), lsb_first, hasSessionFields, options, probe, blocks);
-      if (!device) return std::unexpected(device.error());
-      session.short_reason = device->metadata.short_reason;
-      session.devices.push_back(std::move(*device));
-      return session;
-    }
 
     auto device_count = requireScalarAttr<uint32_t>(file.id(), "device_count", H5T_NATIVE_UINT32);
     if (!device_count || *device_count == 0) return fail("missing or zero device_count");
@@ -778,8 +730,7 @@ std::expected<LoadedSession, std::string> loadSession(const std::filesystem::pat
       }
       Handle group(H5Gopen2(devices_group.id(), name.c_str(), H5P_DEFAULT), H5Gclose);
       if (!group.ok()) return fail(std::format("cannot open /devices/{}", n));
-      constexpr bool hasSessionFields = true;
-      auto device = readDeviceGroup(group.id(), lsb_first, hasSessionFields, options, probe, blocks);
+      auto device = readDeviceGroup(group.id(), options, probe, blocks);
       if (!device) return std::unexpected(std::format("device {}: {}", n, device.error()));
       session.devices.push_back(std::move(*device));
     }

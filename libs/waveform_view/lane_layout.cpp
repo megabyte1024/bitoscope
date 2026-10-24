@@ -44,25 +44,6 @@ std::optional<std::size_t> decoderRowAtY(double y, double laneTop, double rowPit
   return static_cast<std::size_t>(row);
 }
 
-namespace {
-
-// WHY: Compare rows to rowPitch exactly: a sum of fractional pitches can differ in the last bit at a border.
-bool allEqual(std::span<const double> rowHeights, double rowPitch) {
-  return std::ranges::all_of(rowHeights, [&](double h) { return h == rowPitch; });
-}
-
-}
-
-double decoderLaneHeight(std::span<const double> rowHeights, double rowPitch) {
-  if (allEqual(rowHeights, rowPitch)) return decoderLaneHeight(rowHeights.size(), rowPitch);
-  return stackedLanesHeight(rowHeights);
-}
-
-std::optional<std::size_t> decoderRowAtY(double y, double laneTop, std::span<const double> rowHeights, double rowPitch) {
-  if (allEqual(rowHeights, rowPitch)) return decoderRowAtY(y, laneTop, rowPitch, rowHeights.size());
-  return laneAtYByHeights(y, laneTop, rowHeights);
-}
-
 double stackedLaneTop(double stackTop, std::span<const double> laneHeights, std::size_t index) {
   double top = stackTop;
   for (std::size_t i = 0; i < index && i < laneHeights.size(); ++i) top += laneHeights[i];

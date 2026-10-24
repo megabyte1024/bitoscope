@@ -389,6 +389,22 @@ std::expected<Preferences, std::string> parsePreferences(std::string_view json,
       warnings->push_back(std::format("showBits: must be boolean, got {}, using true instead", v.dump()));
     }
   }
+  if (root.contains("showByteValues")) {
+    const auto& v = root.at("showByteValues");
+    if (v.is_boolean()) {
+      prefs.showByteValues = v.get<bool>();
+    } else if (warnings != nullptr) {
+      warnings->push_back(std::format("showByteValues: must be boolean, got {}, using true instead", v.dump()));
+    }
+  }
+  if (root.contains("showPointerLine")) {
+    const auto& v = root.at("showPointerLine");
+    if (v.is_boolean()) {
+      prefs.showPointerLine = v.get<bool>();
+    } else if (warnings != nullptr) {
+      warnings->push_back(std::format("showPointerLine: must be boolean, got {}, using true instead", v.dump()));
+    }
+  }
 
   if (root.contains("lanePinSide")) {
     const auto& v = root.at("lanePinSide");
@@ -670,6 +686,8 @@ std::string serializePreferences(const Preferences& preferences) {
   root["signalStyle"] = std::string(signalStyleName(preferences.signalStyle));
   root["hexStyle"] = std::string(hexStyleName(preferences.hexStyle));
   root["showBits"] = preferences.showBits;
+  root["showByteValues"] = preferences.showByteValues;
+  root["showPointerLine"] = preferences.showPointerLine;
   root["lanePinSide"] = std::string(pinSideName(preferences.lanePinSide));
   root["unsavedCapture"] = preferences.unsavedCapture == UnsavedCapturePolicy::DontSave ? "dontSave" : "ask";
   root["recentFiles"] = preferences.recentFiles;

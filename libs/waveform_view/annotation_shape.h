@@ -7,7 +7,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -91,7 +90,7 @@ struct ClassFill {
 std::vector<ClassFill> annotationClassFills(std::span<const decode::AnnotationRow> rows,
                                             std::span<const RowClass> rowClasses,
                                             std::span<const decode::AnnotationClass> classes,
-                                            const std::map<RowClass, ColorChoice>& overrides, bool dark, Rgb8 neutral);
+                                            bool dark, Rgb8 neutral);
 
 Rgb8 classFill(std::span<const ClassFill> fills, std::uint32_t row, std::uint32_t cls, Rgb8 neutral);
 

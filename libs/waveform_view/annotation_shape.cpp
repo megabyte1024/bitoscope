@@ -119,16 +119,13 @@ std::string decoderRowHeader(std::string_view laneLabel, std::string_view rowNam
 std::vector<ClassFill> annotationClassFills(std::span<const decode::AnnotationRow> rows,
                                             std::span<const RowClass> rowClasses,
                                             std::span<const decode::AnnotationClass> classes,
-                                            const std::map<RowClass, ColorChoice>& overrides, bool dark, Rgb8 neutral) {
+                                            bool dark, Rgb8 neutral) {
   std::vector<ClassFill> fills;
   fills.reserve(rows.size() * classes.size());
   for (const decode::AnnotationRow& row : rows) {
     for (const decode::AnnotationClass& cls : classes) {
-      const auto found = overrides.find({row.id, cls.id});
-      const std::optional<ColorChoice> override =
-        found != overrides.end() ? std::optional<ColorChoice>(found->second) : std::nullopt;
       const std::size_t variant = annotationColorVariant(rows, rowClasses, classes, row.id, cls.role);
-      fills.push_back({row.id, cls.id, resolveAnnotationColor(cls.role, dark, neutral, override, variant)});
+      fills.push_back({row.id, cls.id, defaultAnnotationColor(cls.role, dark, neutral, variant)});
     }
   }
   return fills;

@@ -19,7 +19,7 @@
 #include "annotation_reader.h"
 #include "annotation_row_summary.h"
 #include "decoder.h"
-#include "decoder_row_strip.h"
+#include "annotation_row_layout.h"
 #include "decoder_visibility.h"
 #include "derived_rows.h"
 

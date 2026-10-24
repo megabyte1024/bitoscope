@@ -35,9 +35,8 @@ add_library(bitoscope_waveform_view STATIC
     pass_uploads.cpp
     annotation_colors.cpp
     annotation_shape.cpp
-    decoder_row_strip.cpp
+    annotation_row_layout.cpp
     derived_lane_rows.cpp
-    decoder_visibility.cpp
     bracket.cpp
     strip_cut.cpp
     header_fit.cpp
