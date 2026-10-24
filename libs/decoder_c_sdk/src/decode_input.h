@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "annotation_blocks.h"
-#include "bitoscope/decoder_ring/decode_ring_reader.h"
+#include "decode_ring_reader.h"
 #include "bitoscope_decoder.h"
 #include "bitoscope_decoder_testing.h"
 

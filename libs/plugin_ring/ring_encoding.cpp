@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "bitoscope/plugin_ring/ring_encoding.h"
+#include "ring_encoding.h"
 
 #include <limits>
 

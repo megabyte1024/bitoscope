@@ -16,7 +16,7 @@
 #include <variant>
 #include <vector>
 
-#include "bitoscope/decoder_ring/decode_ring_reader.h"
+#include "decode_ring_reader.h"
 #include "decode_input.h"
 #include "decode_job.h"
 #include "declared_decoder.h"

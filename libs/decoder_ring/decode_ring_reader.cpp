@@ -2,11 +2,11 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "bitoscope/decoder_ring/decode_ring_reader.h"
+#include "decode_ring_reader.h"
 
 #include <utility>
 
-#include "bitoscope/plugin_ring/ring_encoding.h"
+#include "ring_encoding.h"
 
 namespace bitoscope::plugin_ring {
 

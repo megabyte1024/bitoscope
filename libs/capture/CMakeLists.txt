@@ -22,6 +22,7 @@ add_library(bitoscope_raw_capture_buffer STATIC
 target_include_directories(bitoscope_raw_capture_buffer
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/libs/core
+            ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 target_link_libraries(bitoscope_raw_capture_buffer PRIVATE bitoscope_lz4_block bitoscope_checksum)
@@ -36,6 +37,7 @@ add_library(bitoscope_capture_read STATIC
 target_include_directories(bitoscope_capture_read PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 target_link_libraries(bitoscope_capture_read PUBLIC bitoscope_capture)
@@ -50,6 +52,7 @@ add_library(bitoscope_pack_pool STATIC
 target_include_directories(bitoscope_pack_pool PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 find_package(Threads REQUIRED)
@@ -87,6 +90,7 @@ add_library(bitoscope_capture_snapshot STATIC
 target_include_directories(bitoscope_capture_snapshot
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/libs/core
+            ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 target_compile_features(bitoscope_capture_snapshot PUBLIC cxx_std_23)

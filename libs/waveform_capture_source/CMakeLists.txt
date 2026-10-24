@@ -7,7 +7,7 @@ add_library(bitoscope_waveform_capture_source STATIC
 
 target_include_directories(bitoscope_waveform_capture_source PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_include_directories(bitoscope_waveform_capture_source PUBLIC ${CMAKE_SOURCE_DIR}/libs/core)
+target_include_directories(bitoscope_waveform_capture_source PUBLIC ${CMAKE_SOURCE_DIR}/libs/core ${CMAKE_SOURCE_DIR}/libs/sample_chunks)
 
 target_link_libraries(bitoscope_waveform_capture_source PUBLIC
     bitoscope_waveform_view

@@ -14,6 +14,7 @@ add_library(bitoscope_decoder_host STATIC
 target_include_directories(bitoscope_decoder_host PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 find_package(Threads REQUIRED)

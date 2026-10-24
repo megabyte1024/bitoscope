@@ -29,6 +29,7 @@ add_library(bitoscope_acquisition_facets STATIC
 target_include_directories(bitoscope_acquisition_facets PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 target_link_libraries(bitoscope_acquisition_facets PUBLIC bitoscope_pipe_clients)
 target_compile_features(bitoscope_acquisition_facets PUBLIC cxx_std_23)
@@ -45,6 +46,7 @@ add_library(bitoscope_acquisition STATIC
 target_include_directories(bitoscope_acquisition PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 target_link_libraries(bitoscope_acquisition PUBLIC
     bitoscope_bulk_ring

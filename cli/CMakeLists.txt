@@ -9,6 +9,7 @@ add_library(bitoscope_cli_ring_summary STATIC
 target_include_directories(bitoscope_cli_ring_summary PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 target_link_libraries(bitoscope_cli_ring_summary PUBLIC
     bitoscope_bulk_ring
@@ -36,6 +37,7 @@ add_library(bitoscope_cli_settings STATIC
 target_include_directories(bitoscope_cli_settings PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 target_link_libraries(bitoscope_cli_settings PUBLIC
     bitoscope_driver_ipc
@@ -51,6 +53,7 @@ add_library(bitoscope_cli_acquire STATIC
 target_include_directories(bitoscope_cli_acquire PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 target_link_libraries(bitoscope_cli_acquire PUBLIC

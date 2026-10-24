@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 
 add_library(bitoscope_decoder_ring STATIC
-    src/decode_ring_reader.cpp
+    decode_ring_reader.cpp
 )
 
 target_include_directories(bitoscope_decoder_ring PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(bitoscope_decoder_ring PUBLIC

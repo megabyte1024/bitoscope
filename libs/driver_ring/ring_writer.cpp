@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "bitoscope/driver_ring/ring_writer.h"
+#include "ring_writer.h"
 
 #include <algorithm>
 #include <atomic>

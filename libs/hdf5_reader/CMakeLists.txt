@@ -7,6 +7,7 @@ add_library(bitoscope_hdf5_reader STATIC
 target_include_directories(bitoscope_hdf5_reader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
 )
 
 target_link_libraries(bitoscope_hdf5_reader

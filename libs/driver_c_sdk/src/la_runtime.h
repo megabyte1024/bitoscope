@@ -12,7 +12,7 @@
 #include <variant>
 #include <vector>
 
-#include "bitoscope/driver_ring/ring_writer.h"
+#include "ring_writer.h"
 #include "driver_model.h"
 #include "ipc_la_acquisition.h"
 #include "ipc_messages.h"

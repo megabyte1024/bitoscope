@@ -18,14 +18,3 @@ target_link_libraries(bitoscope_demo_signal_pattern PUBLIC
 
 target_compile_features(bitoscope_demo_signal_pattern PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_demo_signal_pattern)
-
-add_library(bitoscope_demo_signal_cobs STATIC
-    cobs.cpp
-)
-
-target_link_libraries(bitoscope_demo_signal_cobs PUBLIC
-    bitoscope_demo_signal_sources
-)
-
-target_compile_features(bitoscope_demo_signal_cobs PUBLIC cxx_std_23)
-bitoscope_enable_warnings(bitoscope_demo_signal_cobs)

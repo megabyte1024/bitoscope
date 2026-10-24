@@ -18,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-#include "bitoscope/plugin_ring/ring_encoding.h"
+#include "ring_encoding.h"
 #include "bulk_ring.h"
 
 namespace bitoscope::plugin_ring {
