@@ -134,6 +134,69 @@ cmake --build build --config Release
 
 On Windows it is `build\gui\Release\bitoscope_gui.exe`.
 
+## Distribution folder
+
+`cmake --install` copies everything the application needs into one folder. The application finds
+`assets/`, `drivers/` and `decoders/` next to its own executable, so the folder can be moved or
+copied to another machine and run from anywhere.
+
+### Linux
+
+```sh
+cmake --install build --prefix dist
+./dist/bitoscope_gui
+```
+
+### Windows
+
+The same in Command Prompt and PowerShell:
+
+```bat
+cmake --install build --config Release --prefix dist
+dist\bitoscope_gui.exe
+```
+
+A zip of the same folder, `bitoscope-<version>-win64.zip`, is made by running `cpack -C Release`
+inside `build`.
+
+### What the GUI needs
+
+```
+dist/
+  bitoscope_gui          bitoscope_gui.exe on Windows
+  assets/                icons, font and application icon; copy the whole folder
+  drivers/
+    demo                 simulated device; demo.exe and libusb-1.0.dll on Windows
+  decoders/
+    decoders_lowlevel    UART, SPI and I2C; .exe on Windows
+    decoders_luajit      Lua decoders; .exe on Windows
+```
+
+`bitoscope_gui` and `assets/` are required. `drivers/` holds one executable per device type:
+without any driver no device can be opened. `decoders/` is needed for protocol decoding. Drivers
+for real devices, built from their own repositories, go into `drivers/` too, together with any
+library they ship.
+
+The install also writes `bitoscope_cli` (the command-line program, not used by the GUI),
+`licenses/` (the licences of Bitoscope and its third-party libraries: keep it when you give the
+folder to someone else) and, on Linux, `share/` (a desktop entry and the application icon for a
+system-wide install).
+
+### What the target machine needs
+
+- Windows: 64-bit Windows 10 or 11 and the Microsoft Visual C++ Redistributable (x64), which
+  provides `MSVCP140.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`. It is already present
+  where Visual Studio is installed. Direct3D 11 is part of Windows.
+- Linux: libusb 1.0, the Vulkan loader with a Vulkan driver, D-Bus, and an X11 or Wayland session
+  (GLFW loads their libraries at run time). On Debian/Ubuntu:
+
+  ```sh
+  sudo apt install libusb-1.0-0 libvulkan1 mesa-vulkan-drivers libdbus-1-3
+  ```
+
+  The program is linked against the C++ library of the build machine, so the target needs the
+  same or a newer distribution release.
+
 ## Architecture
 
 ```
