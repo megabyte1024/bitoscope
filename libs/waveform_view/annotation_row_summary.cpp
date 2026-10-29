@@ -77,37 +77,81 @@ struct Track {
   std::size_t group;
   std::uint32_t cls;
   Edge edge;
+  double at = -1.0;
 };
 
-RowSummary summarizeTracks(AnnotationReader& reader, std::vector<Track> tracks, double first, double spp,
-                           std::uint32_t widthPixels) {
+void appendColumn(RowSummary& out, std::uint32_t c, std::uint32_t cls) {
+  if (!out.runs.empty() && out.runs.back().lastColumn + 1 == c && out.runs.back().cls == cls) {
+    out.runs.back().lastColumn = c;
+  } else {
+    out.runs.push_back({c, c, cls});
+  }
+}
+
+struct ColumnDecision {
+  bool decided = false;
+  std::optional<std::uint32_t> cls;
+};
+
+ColumnDecision decideColumn(const LaneCoverage& coverage, std::span<const Track> tracks, std::uint32_t c) {
+  bool touched = false;
+  std::size_t lead = 0;
+  for (std::size_t t = 0; t < tracks.size(); ++t) {
+    const CoverageBounds& b = coverage.at(tracks[t].group, c);
+    touched = touched || b.upper > 0;
+    if (b.lower > coverage.at(tracks[lead].group, c).lower) lead = t;
+  }
+  if (!touched) return {true, std::nullopt};
+  const std::uint64_t leadLower = coverage.at(tracks[lead].group, c).lower;
+  if (leadLower == 0) return {};
+  std::uint64_t others = 0;
+  bool oneClass = true;
+  for (std::size_t t = 0; t < tracks.size(); ++t) {
+    if (t == lead) continue;
+    const CoverageBounds& b = coverage.at(tracks[t].group, c);
+    others = (std::max)(others, b.upper);
+    if (b.upper > 0 && tracks[t].cls != tracks[lead].cls) oneClass = false;
+  }
+  // WHY: Strictly more: at equal bounds the samples can tie, and a tie goes to the first track, not the lead.
+  if (leadLower > others || oneClass) return {true, tracks[lead].cls};
+  return {};
+}
+
+RowSummary summarizeTracks(AnnotationReader& reader, const LaneCoverage& coverage, std::vector<Track> tracks,
+                           double first, double spp, std::uint32_t widthPixels) {
   const AnnotationGroups& groups = reader.groups();
   RowSummary out;
   if (tracks.empty()) return out;
-  for (Track& track : tracks) track.edge = edgeAt(reader, track.group, Edge{}, 0.0, first, spp, out.probes);
-
+  const bool bounded = std::ranges::all_of(tracks, [&](const Track& t) { return coverage.decides(t.group); });
   for (std::uint32_t c = 0; c < widthPixels; ++c) {
-    const double right = static_cast<double>(c) + 1.0;
-    std::optional<std::uint32_t> best;
-    double bestSamples = 0.0;
-    for (Track& track : tracks) {
-      const Edge left = track.edge;
-      track.edge = edgeAt(reader, track.group, left, right, first, spp, out.probes);
-      const bool touched =
-        left.next < groups.groupSize(track.group) && quotient(left.nextBegin, first, spp) < right;
-      if (!touched) continue;
-      const double samples = (std::max)(0.0, track.edge.samples - left.samples);
-      if (!best || samples > bestSamples) {
-        best = track.cls;
-        bestSamples = samples;
+    const ColumnDecision decision = bounded ? decideColumn(coverage, tracks, c) : ColumnDecision{};
+    std::optional<std::uint32_t> best = decision.cls;
+    if (decision.decided) {
+      ++out.decided;
+    } else {
+      const double left = static_cast<double>(c);
+      const double right = left + 1.0;
+      double bestSamples = 0.0;
+      for (Track& track : tracks) {
+        if (bounded && coverage.at(track.group, c).upper == 0) continue;
+        if (track.at != left) {
+          track.edge = edgeAt(reader, track.group, track.edge, left, first, spp, out.probes);
+          track.at = left;
+        }
+        const Edge from = track.edge;
+        track.edge = edgeAt(reader, track.group, from, right, first, spp, out.probes);
+        track.at = right;
+        const bool touched =
+          from.next < groups.groupSize(track.group) && quotient(from.nextBegin, first, spp) < right;
+        if (!touched) continue;
+        const double samples = (std::max)(0.0, track.edge.samples - from.samples);
+        if (!best || samples > bestSamples) {
+          best = track.cls;
+          bestSamples = samples;
+        }
       }
     }
-    if (!best) continue;
-    if (!out.runs.empty() && out.runs.back().lastColumn + 1 == c && out.runs.back().cls == *best) {
-      out.runs.back().lastColumn = c;
-    } else {
-      out.runs.push_back({c, c, *best});
-    }
+    if (best) appendColumn(out, c, *best);
   }
   return out;
 }
@@ -122,13 +166,20 @@ RowSummary summarizeRow(const AnnotationGroups& groups, std::uint32_t row, const
 
 RowSummary summarizeRow(AnnotationReader& reader, std::uint32_t row, const DecoderVisibility& visibility,
                         double firstVisibleSample, double samplesPerPixel, std::uint32_t widthPixels) {
+  const LaneCoverage coverage(reader.groups(), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeRow(reader, coverage, row, visibility, firstVisibleSample, samplesPerPixel, widthPixels);
+}
+
+RowSummary summarizeRow(AnnotationReader& reader, const LaneCoverage& coverage, std::uint32_t row,
+                        const DecoderVisibility& visibility, double firstVisibleSample, double samplesPerPixel,
+                        std::uint32_t widthPixels) {
   const AnnotationGroups& groups = reader.groups();
   if (!groups.coverageUsable() || widthPixels == 0 || !(samplesPerPixel > 0.0)) {
     return {};
   }
   std::vector<Track> tracks;
   for (const std::size_t g : shownGroups(groups, row, visibility)) tracks.push_back({g, groups.groupClass(g), {}});
-  return summarizeTracks(reader, std::move(tracks), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeTracks(reader, coverage, std::move(tracks), firstVisibleSample, samplesPerPixel, widthPixels);
 }
 
 RowSummary summarizeGroupsAs(const AnnotationGroups& groups, std::span<const std::size_t> groupNumbers,
@@ -140,10 +191,17 @@ RowSummary summarizeGroupsAs(const AnnotationGroups& groups, std::span<const std
 
 RowSummary summarizeGroupsAs(AnnotationReader& reader, std::span<const std::size_t> groupNumbers, std::uint32_t cls,
                              double firstVisibleSample, double samplesPerPixel, std::uint32_t widthPixels) {
+  const LaneCoverage coverage(reader.groups(), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeGroupsAs(reader, coverage, groupNumbers, cls, firstVisibleSample, samplesPerPixel, widthPixels);
+}
+
+RowSummary summarizeGroupsAs(AnnotationReader& reader, const LaneCoverage& coverage,
+                             std::span<const std::size_t> groupNumbers, std::uint32_t cls, double firstVisibleSample,
+                             double samplesPerPixel, std::uint32_t widthPixels) {
   if (!reader.groups().coverageUsable() || widthPixels == 0 || !(samplesPerPixel > 0.0)) return {};
   std::vector<Track> tracks;
   for (const std::size_t g : groupNumbers) tracks.push_back({g, cls, {}});
-  return summarizeTracks(reader, std::move(tracks), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeTracks(reader, coverage, std::move(tracks), firstVisibleSample, samplesPerPixel, widthPixels);
 }
 
 std::size_t firstSpanPast(const AnnotationGroups& groups, std::size_t g, double x, double firstVisibleSample,

@@ -44,7 +44,7 @@ std::expected<std::unique_ptr<PackPool>, std::string> PackPool::create(
 
   std::unique_ptr<PackPool> pool;
   try {
-    pool.reset(new PackPool(buffer, std::move(config.hooks), std::move(commit)));
+    pool.reset(new PackPool(buffer, std::move(config.hooks), std::move(config.prepare), std::move(commit)));
     pool->slots_.reserve(static_cast<size_t>(depth));
     for (uint64_t i = 0; i < depth; ++i) {
       auto scratch = PackScratch::create(plan.channels(), plan.samplesPerWindow(), buffer.hasPyramid());
@@ -81,8 +81,8 @@ std::expected<std::unique_ptr<PackPool>, std::string> PackPool::create(
   return pool;
 }
 
-PackPool::PackPool(const RawCaptureBuffer& buffer, PackPoolHooks hooks, CommitFn commit)
-    : buffer_(buffer), hooks_(std::move(hooks)), commit_(std::move(commit)) {}
+PackPool::PackPool(const RawCaptureBuffer& buffer, PackPoolHooks hooks, PackPrepareFn prepare, CommitFn commit)
+    : buffer_(buffer), hooks_(std::move(hooks)), prepare_(std::move(prepare)), commit_(std::move(commit)) {}
 
 PackPool::~PackPool() { stop(); }
 
@@ -193,7 +193,13 @@ void PackPool::run() {
     // WHY: Catch everything: std::format throws bad_alloc when memory is short, and an escape would terminate.
     try {
       if (hooks_.before_pack) hooks_.before_pack(seq);
-      slot->result = buffer_.packWindow(slot->lease, slot->scratch);
+      std::expected<void, std::string> prepared;
+      if (prepare_) prepared = prepare_(seq, slot->lease);
+      if (prepared) {
+        slot->result = buffer_.packWindow(slot->lease, slot->scratch);
+      } else {
+        slot->result = std::unexpected(std::move(prepared.error()));
+      }
       if (hooks_.alter_packed) hooks_.alter_packed(seq, slot->result);
     } catch (...) {
       slot->result = packThrew();

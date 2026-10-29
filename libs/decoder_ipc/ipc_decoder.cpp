@@ -14,6 +14,7 @@
 #include "decoder.capnp.h"
 #include "ipc_capnp_boundary.h"
 #include "ipc_capnp_values.h"
+#include "ipc_decoder_build.h"
 
 namespace bitoscope::ipc::decoder {
 
@@ -192,17 +193,6 @@ void build(w::DecoderInfo::Builder out, const DecoderInfo& in) {
   }
 }
 
-void build(capnp::List<w::StreamItem>::Builder out, const std::vector<StreamItem>& in) {
-  for (unsigned i = 0; i < out.size(); ++i) {
-    const StreamItem& item = in[i];
-    out[i].setBegin(item.begin);
-    out[i].setEnd(item.end);
-    out[i].setValue(item.value);
-    out[i].setKind(item.kind);
-    out[i].setFlags(item.flags);
-  }
-}
-
 void build(w::JobSetup::Builder out, const JobSetup& in) {
   if (!in.decoder.empty()) out.setDecoder(asText(in.decoder));
   if (!in.channels.empty()) {
@@ -223,6 +213,7 @@ void build(w::JobSetup::Builder out, const JobSetup& in) {
   facts.setSampleRateMilliHz(in.facts.sampleRateMilliHz);
   facts.setChannelCount(in.facts.channelCount);
   facts.setTotalSamples(in.facts.totalSamples);
+  facts.setTotalIsBound(in.facts.totalIsBound);
   if (!in.outputs.empty()) buildTexts(out.initOutputs(static_cast<unsigned>(in.outputs.size())), in.outputs);
   if (!in.inputs.empty()) {
     auto inputs = out.initInputs(static_cast<unsigned>(in.inputs.size()));
@@ -401,7 +392,8 @@ std::optional<DecodeError> read(w::JobSetup::Reader in, JobSetup& out) {
     out.options.push_back(std::move(value));
   }
   auto facts = in.getFacts();
-  out.facts = CaptureFacts{facts.getSampleRateMilliHz(), facts.getChannelCount(), facts.getTotalSamples()};
+  out.facts = CaptureFacts{facts.getSampleRateMilliHz(), facts.getChannelCount(), facts.getTotalSamples(),
+                           facts.getTotalIsBound()};
   if (out.facts.sampleRateMilliHz == 0) return missing("decoder job's capture has no sample rate");
   if (out.facts.channelCount == 0) return missing("decoder job's capture has no channel count");
   for (capnp::Text::Reader o : in.getOutputs()) {
@@ -462,7 +454,7 @@ std::expected<Bytes, std::string> encodeCommand(const DecoderCommand& command) {
       auto out = root.initItems();
       if (!feed->input.empty()) out.setInput(asText(feed->input));
       // WHY: Initialized even when empty: a last, empty batch still says "no more".
-      build(out.initItems(static_cast<unsigned>(feed->items.size())), feed->items);
+      buildItems(out.initItems(static_cast<unsigned>(feed->items.size())), feed->items);
       out.setLast(feed->last);
     } else {
       root.setCancel();
@@ -472,22 +464,17 @@ std::expected<Bytes, std::string> encodeCommand(const DecoderCommand& command) {
 
 std::expected<Bytes, std::string> encodeEvent(const DecoderEvent& event) {
   return detail::buildMessage([&](capnp::MessageBuilder& message) {
-    auto root = message.initRoot<w::DecoderEvent>();
-    root.setJobId(event.jobId);
-    root.setSettled(event.settled);
     if (const auto* batch = std::get_if<AnnotationBatch>(&event.body)) {
-      // WHY: Initialized even when empty: the list is what selects the union member.
-      auto out = root.initAnnotations(static_cast<unsigned>(batch->annotations.size()));
-      for (unsigned i = 0; i < out.size(); ++i) {
-        const Annotation& a = batch->annotations[i];
-        auto element = out[i];
-        element.setBegin(a.begin);
-        element.setEnd(a.end);
-        element.setRow(a.row);
-        element.setCls(a.cls);
-        element.setValue(a.value);
-      }
-    } else if (const auto* ended = std::get_if<DecodeEnded>(&event.body)) {
+      buildAnnotationEvent(message, event.jobId, event.settled, batch->annotations,
+                           [](const Annotation& a) { return a.value; });
+      return;
+    }
+    if (const auto* items = std::get_if<ItemBatch>(&event.body)) {
+      buildItemEvent(message, event.jobId, event.settled, items->output, items->items);
+      return;
+    }
+    auto root = eventRoot(message, event.jobId, event.settled);
+    if (const auto* ended = std::get_if<DecodeEnded>(&event.body)) {
       auto out = root.initDecodeEnded();
       out.setStatus(static_cast<w::DecodeStatus>(static_cast<uint16_t>(ended->status)));
       if (!ended->error.empty()) out.setError(asText(ended->error));
@@ -501,10 +488,6 @@ std::expected<Bytes, std::string> encodeEvent(const DecoderEvent& event) {
         const std::vector<uint8_t>& value = byteValues->values[i];
         out.set(i, capnp::Data::Reader(value.data(), value.size()));
       }
-    } else if (const auto* items = std::get_if<ItemBatch>(&event.body)) {
-      auto out = root.initItems();
-      if (!items->output.empty()) out.setOutput(asText(items->output));
-      build(out.initItems(static_cast<unsigned>(items->items.size())), items->items);
     } else {
       const auto& wanted = std::get<ItemsWanted>(event.body);
       auto out = root.initItemsWanted();

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <format>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -20,6 +21,7 @@
 #include "decode_budget.h"
 #include "decoded_annotations.h"
 #include "gui_event_handlers.h"
+#include "live_run_capture.h"
 #include "plugin_decoder.h"
 
 namespace bitoscope::gui_decode {
@@ -199,6 +201,7 @@ struct Slot {
   bool started = false;
   std::atomic<bool> posted{false};
   std::atomic<bool> stranded{false};
+  std::atomic<bool> outOfBudget{false};
 };
 
 template <typename Run>
@@ -212,6 +215,15 @@ decode::ChainOutcome guarded(Run&& run) {
   } catch (...) {
     return std::unexpected(std::string("decoder failed with unknown error"));
   }
+}
+
+std::vector<bool> samplesOnly(const decode::ChainPlan& plan) {
+  std::vector<bool> out;
+  out.reserve(plan.instances.size());
+  for (const decode::ChainInstance& instance : plan.instances) {
+    out.push_back(instance.decoder->reads() == decode::Reads::Samples);
+  }
+  return out;
 }
 
 decoder_host::PluginDecoder* pluginOf(decode::Decoder& decoder) {
@@ -232,13 +244,15 @@ struct DecoderRunner::Work {
   Work(std::uint64_t runId, SignalViewSource source, bool oneView, decode::ChainPlan chain,
        gui_events::GuiEventQueue& events, DecodeMemory budget, DecodeThreadSetup threadSetup, ProgressClock clock,
        std::function<void(std::size_t)> beforeStart, std::optional<RunCapture> fromCapture,
-       const std::atomic<bool>& cancel)
+       std::shared_ptr<const LiveRunCapture> growing, const std::atomic<bool>& cancel)
       : views(std::move(source)),
         oneAfterAnother(oneView),
         setUp(std::move(threadSetup)),
         beforeThreadStart(std::move(beforeStart)),
         capture(std::move(fromCapture)),
+        live(std::move(growing)),
         plan(std::move(chain)),
+        readsSamplesOnly(samplesOnly(plan)),
         shared{runId, events, budget.budgetBytes,
                std::make_shared<LockedMemory>(
                  budget.memory ? std::move(budget.memory)
@@ -306,6 +320,10 @@ struct DecoderRunner::Work {
       return "decode thread set-up failed with unknown error";
     }
     try {
+      if (live && readsSamplesOnly[i]) {
+        slots[i].sink = std::make_unique<GroupingSink>(shared, i, live->boundSamples());
+        return {};
+      }
       auto view = views();
       if (!view) return std::move(view.error());
       slots[i].sink = std::make_unique<GroupingSink>(shared, i, (*view)->sampleCount());
@@ -357,13 +375,17 @@ struct DecoderRunner::Work {
     if (!outcome) return outcome;
     Slot& slot = slots[i];
     auto groups = slot.sink->finish();
-    if (!groups) return std::unexpected(budgetFailureText(decoder, groups.error(), shared.budgetBytes));
+    if (!groups) {
+      slot.outOfBudget = true;
+      return std::unexpected(budgetFailureText(decoder, groups.error(), shared.budgetBytes));
+    }
     const std::size_t bytes = groups->memoryBytes();
     const std::size_t stored = groups->size();
     try {
       slot.finished = std::make_shared<const DecodedAnnotations>(std::move(*groups));
     } catch (const std::bad_alloc&) {
       slot.sink->memory().release(bytes);
+      slot.outOfBudget = true;
       return std::unexpected(
         budgetFailureText(decoder, {waveform_view::GroupsRefusal::Reason::OutOfMemory, stored}, shared.budgetBytes));
     }
@@ -385,6 +407,14 @@ struct DecoderRunner::Work {
                                   decode::StreamOutputs* outputs) {
       return guarded([&] {
         auto* plugin = pluginOf(decoder);
+        if (live) {
+          if (plugin == nullptr) {
+            return decode::ChainOutcome(std::unexpected(std::format(
+              "decoder '{}' cannot decode capture while it is made: only decoder plugins can", decoder.name())));
+          }
+          return store(i, decoder,
+                       plugin->decodeGrowingCapture(live->growing(), live->end(), live->boundSamples(), sink, outputs));
+        }
         if (plugin != nullptr && capture) {
           return store(i, decoder, plugin->decodeCapture(*capture->buffer, capture->extent, capture->tail, sink, outputs));
         }
@@ -404,9 +434,10 @@ struct DecoderRunner::Work {
       return guarded([&] {
         const decode::SignalView& view = *slots[i].view;
         auto* plugin = pluginOf(decoder);
-        if (plugin != nullptr && capture) {
+        const std::optional<RunCapture> from = live ? live->finished() : capture;
+        if (plugin != nullptr && from) {
           return store(i, decoder,
-                       plugin->decodeCaptureMixed(*capture->buffer, capture->extent, capture->tail, inputs, sink, outputs));
+                       plugin->decodeCaptureMixed(*from->buffer, from->extent, from->tail, inputs, sink, outputs));
         }
         return store(i, decoder, decoder.decodeMixed(view, inputs, factsOf(view), sink, outputs));
       });
@@ -427,7 +458,9 @@ struct DecoderRunner::Work {
   const DecodeThreadSetup setUp;
   const std::function<void(std::size_t)> beforeThreadStart;
   const std::optional<RunCapture> capture;
+  const std::shared_ptr<const LiveRunCapture> live;
   decode::ChainPlan plan;
+  const std::vector<bool> readsSamplesOnly;
   RunShared shared;
   std::vector<Slot> slots;
   const UnusedView unused{};
@@ -446,7 +479,7 @@ DecoderRunner::DecoderRunner(std::uint64_t run, const decode::SignalView& view, 
                              gui_events::GuiEventQueue& queue, DecodeMemory memory)
     : work_(std::make_unique<Work>(run, borrowed(view), true, std::move(plan), queue, std::move(memory),
                                    DecodeThreadSetup{}, ProgressClock{}, std::function<void(std::size_t)>{}, std::nullopt,
-                                   cancel_)) {
+                                   nullptr, cancel_)) {
   work_->begin();
 }
 
@@ -456,8 +489,26 @@ DecoderRunner::DecoderRunner(std::uint64_t run, SignalViewSource views, decode::
                              std::optional<RunCapture> capture)
     : work_(std::make_unique<Work>(run, std::move(views), false, std::move(plan), queue, std::move(memory),
                                    std::move(threadSetup), std::move(clock), std::move(beforeThreadStart),
-                                   std::move(capture), cancel_)) {
+                                   std::move(capture), nullptr, cancel_)) {
   work_->begin();
+}
+
+DecoderRunner::DecoderRunner(std::uint64_t run, std::shared_ptr<const LiveRunCapture> live, decode::ChainPlan plan,
+                             gui_events::GuiEventQueue& queue, DecodeMemory memory, DecodeThreadSetup threadSetup,
+                             ProgressClock clock)
+    : work_(std::make_unique<Work>(
+        run, SignalViewSource([live, this] { return live->finishedView(cancel_); }), false, std::move(plan), queue,
+        std::move(memory), std::move(threadSetup), std::move(clock), std::function<void(std::size_t)>{}, std::nullopt,
+        live, cancel_)) {
+  work_->begin();
+}
+
+bool DecoderRunner::readsGrowingCapture(std::size_t position) const {
+  return work_->live != nullptr && position < work_->readsSamplesOnly.size() && work_->readsSamplesOnly[position];
+}
+
+bool DecoderRunner::ranOutOfBudget(std::size_t position) const {
+  return position < work_->slots.size() && work_->slots[position].outOfBudget;
 }
 
 DecoderRunner::~DecoderRunner() {

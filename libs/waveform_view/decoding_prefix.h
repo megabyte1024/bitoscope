@@ -24,7 +24,9 @@ std::optional<HatchedColumns> hatchedColumns(LaneDrawing drawing, std::uint64_t 
 
 bool laneColumnHittable(const std::optional<HatchedColumns>& hatched, double column);
 
-enum class LaneStatusKind { None, Decoding, DecodingPercent, Failed };
+enum class LaneStatusKind { None, Decoding, DecodingPercent, StartsWhenCaptureEnds, Failed };
+
+enum class LaneCaptureMode { Ended, Live, StartsAtEnd };
 
 struct LaneStatus {
   LaneStatusKind kind = LaneStatusKind::None;
@@ -32,6 +34,7 @@ struct LaneStatus {
   bool operator==(const LaneStatus&) const = default;
 };
 
-LaneStatus decoderLaneStatus(bool decoding, bool failed, bool resultDrawn, std::optional<int> percent);
+LaneStatus decoderLaneStatus(bool decoding, bool failed, bool resultDrawn, std::optional<int> percent,
+                             LaneCaptureMode mode = LaneCaptureMode::Ended);
 
 }

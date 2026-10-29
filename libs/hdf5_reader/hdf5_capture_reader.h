@@ -15,6 +15,7 @@
 #include "capture_allocator.h"
 #include "capture_writer.h"
 #include "memory_probe.h"
+#include "pack_pool.h"
 #include "raw_capture_buffer.h"
 
 namespace bitoscope::hdf5 {
@@ -68,6 +69,8 @@ struct Hdf5ReaderOptions {
   uint64_t arena_block_bytes = 0;
   std::optional<uint32_t> clearing_workers;
   bitoscope::capture::ClearingThreads* clearing_threads = nullptr;
+  std::optional<uint32_t> pack_workers;
+  bitoscope::capture::PackPoolHooks pack_hooks_for_test;
 };
 
 std::expected<LoadedSession, std::string> loadSession(const std::filesystem::path& path,

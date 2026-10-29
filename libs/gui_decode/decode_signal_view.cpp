@@ -17,6 +17,12 @@ struct ViewOverBuffer {
   bitoscope::capture::RawBufferSignalView view;
 };
 
+bitoscope::capture::ExtentTail extentTailOf(const bitoscope::gui_capture::CaptureOutcome& outcome) {
+  if (outcome.trimmed) return bitoscope::capture::ExtentTail::Trimmed;
+  return outcome.originSampleIndex.has_value() ? bitoscope::capture::ExtentTail::InsideLastWindow
+                                               : bitoscope::capture::ExtentTail::Exact;
+}
+
 }
 
 std::expected<bitoscope::capture::RawBufferSignalView, std::string> signalViewForOutcome(
@@ -27,10 +33,7 @@ std::expected<bitoscope::capture::RawBufferSignalView, std::string> signalViewFo
   if (!outcome.buffer) {
     return std::unexpected("capture's samples are not held any more; nothing can be decoded");
   }
-  const bitoscope::capture::ExtentTail tail = outcome.originSampleIndex.has_value()
-                                                   ? bitoscope::capture::ExtentTail::InsideLastWindow
-                                                   : bitoscope::capture::ExtentTail::Exact;
-  return bitoscope::capture::RawBufferSignalView::create(*outcome.buffer, outcome.extent, tail);
+  return bitoscope::capture::RawBufferSignalView::create(*outcome.buffer, outcome.extent, extentTailOf(outcome));
 }
 
 std::expected<SignalViewSource, std::string> signalViewSourceForOutcome(
@@ -38,9 +41,7 @@ std::expected<SignalViewSource, std::string> signalViewSourceForOutcome(
   if (auto refused = signalViewForOutcome(outcome); !refused) return std::unexpected(refused.error());
   const std::shared_ptr<const bitoscope::capture::RawCaptureBuffer> buffer = outcome.buffer;
   const bitoscope::capture::CaptureExtent extent = outcome.extent;
-  const bitoscope::capture::ExtentTail tail = outcome.originSampleIndex.has_value()
-                                                ? bitoscope::capture::ExtentTail::InsideLastWindow
-                                                : bitoscope::capture::ExtentTail::Exact;
+  const bitoscope::capture::ExtentTail tail = extentTailOf(outcome);
   return SignalViewSource(
     [buffer, extent, tail]() -> std::expected<std::shared_ptr<const bitoscope::decode::SignalView>, std::string> {
       auto view = bitoscope::capture::RawBufferSignalView::create(*buffer, extent, tail);
@@ -52,9 +53,7 @@ std::expected<SignalViewSource, std::string> signalViewSourceForOutcome(
 
 std::expected<RunCapture, std::string> runCaptureForOutcome(const bitoscope::gui_capture::CaptureOutcome& outcome) {
   if (auto refused = signalViewForOutcome(outcome); !refused) return std::unexpected(refused.error());
-  const bitoscope::capture::ExtentTail tail = outcome.originSampleIndex.has_value()
-                                                ? bitoscope::capture::ExtentTail::InsideLastWindow
-                                                : bitoscope::capture::ExtentTail::Exact;
+  const bitoscope::capture::ExtentTail tail = extentTailOf(outcome);
   return RunCapture{outcome.buffer, outcome.extent, tail};
 }
 

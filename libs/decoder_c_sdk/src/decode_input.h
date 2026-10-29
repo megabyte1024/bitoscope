@@ -25,6 +25,7 @@ namespace bitoscope::plugin_c_sdk {
 
 inline constexpr uint32_t kHeartbeatEvery = 1024;
 inline constexpr size_t kAnnotationBatch = 1024;
+inline constexpr size_t kEmitRoom = 256;
 inline constexpr uint64_t kWatermarkStride = uint64_t{1} << 16;
 inline constexpr uint64_t kDefaultProgressStep = 4096;
 inline constexpr size_t kItemBatch = 1024;
@@ -70,7 +71,14 @@ struct bitoscope_decode_input {
 
   uint32_t channels() const { return channels_; }
 
+  void countScans(uint64_t* counter) { scanned_ = counter; }
+  uint64_t* scanCounter() const { return scanned_; }
+  void noteScanned(uint64_t words) {
+    if (scanned_ != nullptr) *scanned_ += words;
+  }
+
   void setProgressStep(uint64_t step) { progress_step_ = step; }
+  void setBound(uint64_t samples) { bound_ = samples; }
   uint64_t progressStep() const { return progress_step_; }
   uint64_t effectiveProgressStep() const {
     return progress_step_ != 0 ? progress_step_ : bitoscope::plugin_c_sdk::kDefaultProgressStep;
@@ -94,6 +102,14 @@ struct bitoscope_decode_input {
 
   void tick() {
     if (--countdown_ == 0) beat();
+  }
+  void tick(uint32_t n) {
+    if (countdown_ > n) {
+      countdown_ -= n;
+    } else {
+      countdown_ = 1;
+      tick();
+    }
   }
   const bitoscope_span* spanAt(uint64_t sample);
   bool checkChannel(uint32_t channel);
@@ -130,6 +146,7 @@ struct bitoscope_decode_input {
   void letGoOfOlderHalf(uint64_t wanted);
   void failLookBack(uint64_t sample);
 
+  uint64_t* scanned_ = nullptr;
   uint32_t channels_ = 0;
   bool samples_ = true;
   std::deque<Span> window_;
@@ -147,6 +164,7 @@ struct bitoscope_decode_input {
   uint32_t countdown_ = bitoscope::plugin_c_sdk::kHeartbeatEvery;
   uint64_t waits_ = 0;
   uint64_t progress_step_ = 0;
+  std::optional<uint64_t> bound_;
   std::optional<bitoscope::plugin_ring::DecodeRingReader> reader_;
   std::vector<std::vector<uint64_t>> storage_;
   struct Items;
@@ -171,6 +189,8 @@ struct bitoscope_annotations {
 
   bitoscope_decode_input* input() const { return in_; }
   int emit(uint64_t begin, uint64_t end, uint32_t row, uint32_t cls, uint64_t value);
+  bitoscope_emit_cursor* room() { return &cursor_; }
+  int commitRoom();
   int emitBytes(uint64_t begin, uint64_t end, uint32_t row, uint32_t cls, std::span<const uint8_t> bytes);
   void onBytes(DeliverBytes deliver) { deliver_bytes_ = std::move(deliver); }
   void checkBatches(CheckBatch check) { check_ = std::move(check); }
@@ -188,12 +208,21 @@ struct bitoscope_annotations {
                                                DeliverItems deliver = {},
                                                size_t batch = bitoscope::plugin_c_sdk::kItemBatch);
   int put(uint32_t output, const bitoscope_stream_item& item);
+  bool itemsEndWithin(uint64_t samples);
   std::span<const bitoscope_stream_item> collectedItems(uint32_t output) const;
 
  private:
   struct Items;
 
   int admit(const bitoscope_annotation& a);
+  int flushRoom();
+  void openRoom();
+  void closeRoom();
+  int closed();
+  int closedIfFailed(int status);
+  uint64_t endLimit() const;
+  bool admits(const bitoscope_annotation& a, uint64_t limit) const;
+  void refuse(const bitoscope_annotation& a);
   bool handOn(size_t n);
   bool handOnItems(uint32_t output);
   bool releaseWaiting();
@@ -203,6 +232,8 @@ struct bitoscope_annotations {
   Deliver deliver_;
   size_t batch_;
   std::vector<bitoscope_annotation> pending_;
+  std::vector<bitoscope_annotation> room_;
+  bitoscope_emit_cursor cursor_{};
   size_t checked_ = 0;
   bitoscope::plugin_c_sdk::AnnotationBlocks collected_;
   DeliverBytes deliver_bytes_;

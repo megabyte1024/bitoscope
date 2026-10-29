@@ -61,6 +61,7 @@ class AnnotationStore {
   void dropSetAside();
   void removeDecoder(std::size_t index);
   std::uint64_t run() const { return run_; }
+  std::optional<std::size_t> runPositionOf(std::size_t index) const;
   bool resultArrived(std::uint64_t runId, std::size_t runPosition,
                      const std::expected<std::shared_ptr<const DecodedAnnotations>, std::string>& result);
   bool progressArrived(std::uint64_t runId, std::size_t runPosition, const DecodeProgress& progress);

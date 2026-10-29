@@ -21,6 +21,7 @@
 #include "capture_allocator.h"
 #include "cli_acquire.h"
 #include "cli_args.h"
+#include "cli_check_driver.h"
 #include "cli_commands.h"
 #include "cli_decode.h"
 #include "cli_decoder_plugins.h"
@@ -222,6 +223,9 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
   if (opts.action == Action::Help) {
     out << usageText() << std::flush;
     return kExitComplete;
+  }
+  if (opts.action == Action::CheckDriver) {
+    return checkDriver(opts.check_driver, out, err, environment.inactivity_timeout_ms_for_test);
   }
 
   if (opts.action == Action::Acquire) {

@@ -19,19 +19,13 @@
 
 #include "annotation_block.h"
 #include "annotation_memory.h"
+#include "coverage_pyramid.h"
 #include "decoder.h"
 #include "row_class.h"
 
 namespace bitoscope::waveform_view {
 
 class AnnotationReader;
-
-struct MemoryCharge {
-  AnnotationMemory* memory = nullptr;
-  std::size_t charged = 0;
-  void acquire(std::size_t bytes);
-  void release(std::size_t bytes);
-};
 
 // WHY: Chunked column, not std::vector: a doubling vector copies itself whole and holds up to 1.5 times its need.
 template <class T>
@@ -177,6 +171,11 @@ struct AnnotationRange {
   std::size_t count() const;
 };
 
+struct CoveragePolicy {
+  unsigned budgetPercent = 20;
+  unsigned fixedShift = 0;
+};
+
 class AnnotationGroups {
  public:
   static constexpr std::size_t kCoverageStride = 32;
@@ -231,6 +230,7 @@ class AnnotationGroups {
   std::size_t memoryBytes() const;
   std::size_t blockBytes(std::size_t g) const;
   std::span<const std::uint8_t> blockArray(std::size_t g) const;
+  const CoveragePyramid& coverage(std::size_t g) const { return groups_[g].coverage; }
 
  private:
   friend class AnnotationGroupsBuilder;
@@ -255,6 +255,7 @@ class AnnotationGroups {
     std::uint8_t valueBytes = 0;
     std::vector<std::uint64_t> maxEnds;
     std::vector<std::uint64_t> sortedEnds;
+    CoveragePyramid coverage;
 
     std::size_t blockCount() const { return (n + kBlockEntries - 1) / kBlockEntries; }
     std::uint64_t blockBegin(std::size_t k) const {
@@ -305,6 +306,8 @@ class AnnotationGroupsBuilder {
  public:
   AnnotationGroupsBuilder();
   explicit AnnotationGroupsBuilder(AnnotationMemory& memory);
+  explicit AnnotationGroupsBuilder(CoveragePolicy policy);
+  AnnotationGroupsBuilder(AnnotationMemory& memory, CoveragePolicy policy);
   ~AnnotationGroupsBuilder();
   AnnotationGroupsBuilder(const AnnotationGroupsBuilder&) = delete;
   AnnotationGroupsBuilder& operator=(const AnnotationGroupsBuilder&) = delete;
@@ -324,12 +327,26 @@ class AnnotationGroupsBuilder {
  private:
   struct BuildGroup;
 
+  static constexpr std::size_t kFirstCoverageLook = 1024;
+  static constexpr std::size_t kLeastCoverageCap = 4096;
+  static constexpr std::size_t kFixedCoverageCap = std::size_t{64} << 20;
+
   std::size_t groupFor(std::uint32_t row, std::uint32_t cls);
+  void lookAtCoverage();
+  std::size_t coverageBudget(std::size_t storeBytes) const;
+  unsigned coverageShiftFor(std::span<const std::pair<std::uint64_t, std::uint64_t>> extents,
+                            std::size_t storeBytes) const;
+  void lookAfterAdding(const BuildGroup& build);
+  void finishCoverage(AnnotationGroups& out, std::vector<std::unique_ptr<BuildGroup>>& builds);
   std::expected<void, GroupsRefusal> refuse(GroupsRefusal::Reason reason);
   void drop();
   static void complete(AnnotationGroups& out, std::vector<AnnotationGroups::Group> groups, MemoryCharge& charge);
 
   MemoryCharge charge_;
+  CoveragePolicy policy_;
+  unsigned coverageShift_ = 0;
+  std::size_t coverageCap_ = 0;
+  std::size_t nextCoverageLook_ = kFirstCoverageLook;
   std::optional<GroupsRefusal> refused_;
   std::size_t stored_ = 0;
   std::vector<AnnotationGroups::Group> groups_;
@@ -341,7 +358,7 @@ class AnnotationGroupsBuilder {
   std::size_t last_ = 0;
 };
 
-AnnotationGroups groupAnnotations(std::span<const decode::Annotation> annotations);
+AnnotationGroups groupAnnotations(std::span<const decode::Annotation> annotations, CoveragePolicy policy = {});
 
 }
 

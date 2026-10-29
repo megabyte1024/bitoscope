@@ -46,7 +46,7 @@ struct FindInput {
   bool caseSensitive = false;
   std::span<const FindSource> sources;
   std::uint64_t anchor = 0;
-  std::chrono::steady_clock::time_point now;
+  std::chrono::steady_clock::time_point now{};
 };
 
 using FindScanStep = std::function<std::expected<std::vector<ByteMatch>, ByteSearchFailure>(

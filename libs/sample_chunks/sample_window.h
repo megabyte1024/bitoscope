@@ -38,7 +38,6 @@ enum class WaitEnd { Abandoned, TimedOut };
 struct WindowInfo {
   uint64_t first_sample_index = 0;
   uint64_t sample_rate_milli_hz = 0;
-  uint64_t gap_samples_before = 0;
   uint32_t num_channels = 0;
   uint32_t num_samples = 0;
 };

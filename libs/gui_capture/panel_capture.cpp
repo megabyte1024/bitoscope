@@ -29,6 +29,17 @@ void PanelCapture::release() {
   fromFile_ = false;
 }
 
+std::expected<void, std::string> PanelCapture::trim(TrimSide side, uint64_t at) {
+  if (saving_) return std::unexpected(std::string("capture is being saved; trim it after saving ends"));
+  if (!kept_) return std::unexpected(std::string("there is no capture to trim"));
+  auto trimmed = trimmedOutcome(*kept_, side, at);
+  if (!trimmed) return std::unexpected(std::move(trimmed.error()));
+  kept_ = std::move(*trimmed);
+  dataSaved_ = false;
+  knownFile_.reset();
+  return {};
+}
+
 void PanelCapture::started(uint64_t run) {
   release();
   run_ = run;

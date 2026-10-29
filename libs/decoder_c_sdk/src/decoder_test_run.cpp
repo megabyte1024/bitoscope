@@ -277,7 +277,7 @@ const char* bitoscope_test_error(const bitoscope_test_run* run) {
   return run->error.empty() ? nullptr : run->error.c_str();
 }
 
-uint64_t bitoscope_test_look_ahead(const bitoscope_test_run* run) {
+uint64_t bitoscope_test_look_ahead_samples(const bitoscope_test_run* run) {
   return run == nullptr || run->job == nullptr ? 0 : run->job->lookAhead;
 }
 
@@ -375,7 +375,7 @@ std::expected<TestDecode, std::string> TestPlugin::decode(const TestCapture& cap
     if (bytes == nullptr) break;
     out.bytes.emplace_back(bytes, bytes + length);
   }
-  out.lookAhead = bitoscope_test_look_ahead(run.get());
+  out.lookAheadSamples = bitoscope_test_look_ahead_samples(run.get());
   return out;
 }
 

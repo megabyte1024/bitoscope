@@ -2,6 +2,7 @@
 
 add_library(bitoscope_decoder_c_sdk STATIC
     src/annotation_blocks.cpp
+    src/c_declaration.cpp
     src/decode_api.cpp
     src/decode_cpp_api.cpp
     src/decode_input.cpp
@@ -24,6 +25,7 @@ target_link_libraries(bitoscope_decoder_c_sdk
     PRIVATE
         bitoscope_plugin_c_sdk_internal
         bitoscope_decoder_ipc
+        bitoscope_decoder_capnp
         bitoscope_decoder_ring
         bitoscope_decode
         bitoscope_display_text

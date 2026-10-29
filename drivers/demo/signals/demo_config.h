@@ -32,6 +32,7 @@ struct DemoFacetConfig {
   bool marker = false;
   uint64_t marker_at = 1;
   uint32_t marker_channel = 0;
+  bool test_pattern = false;
 };
 
 inline std::expected<void, std::string> checkDemoConfig(const DemoFacetConfig& config) {

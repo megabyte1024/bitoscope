@@ -6,15 +6,16 @@ target_include_directories(bitoscope_capture INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(bitoscope_capture INTERFACE bitoscope_decode bitoscope_lz4_block bitoscope_checksum bitoscope_trigger
+target_link_libraries(bitoscope_capture INTERFACE bitoscope_decode bitoscope_lz4_block bitoscope_checksum bitoscope_trigger bitoscope_window_assembler
     bitoscope_raw_capture_buffer bitoscope_history_ring_floor bitoscope_triggered_window
-    bitoscope_capture_snapshot bitoscope_block_clearing bitoscope_arena_growth)
+    bitoscope_capture_snapshot bitoscope_block_clearing bitoscope_arena_growth bitoscope_cgroup_memory_limit)
 
 target_compile_features(bitoscope_capture INTERFACE cxx_std_23)
 
 # WHY: bitoscope_raw_capture_buffer must not link bitoscope_capture back: that would be a cycle.
 add_library(bitoscope_raw_capture_buffer STATIC
     pack_scratch.cpp
+    raw_capture_buffer.cpp
     capture_index.cpp
     live_pyramid.cpp
 )
@@ -111,6 +112,7 @@ bitoscope_enable_warnings(bitoscope_block_clearing)
 
 add_library(bitoscope_arena_growth STATIC
     arena_growth.cpp
+    block_supply_ahead.cpp
 )
 
 target_include_directories(bitoscope_arena_growth PUBLIC
@@ -121,3 +123,29 @@ target_link_libraries(bitoscope_arena_growth PUBLIC bitoscope_block_clearing bit
 
 target_compile_features(bitoscope_arena_growth PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_arena_growth)
+
+add_library(bitoscope_capture_session STATIC
+    capture_session.cpp
+)
+
+target_include_directories(bitoscope_capture_session PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/libs/core
+    ${CMAKE_SOURCE_DIR}/libs/sample_chunks
+)
+
+target_link_libraries(bitoscope_capture_session PUBLIC bitoscope_pack_pool)
+
+target_compile_features(bitoscope_capture_session PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_capture_session)
+
+add_library(bitoscope_cgroup_memory_limit STATIC
+    cgroup_memory_limit.cpp
+)
+
+target_include_directories(bitoscope_cgroup_memory_limit PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_compile_features(bitoscope_cgroup_memory_limit PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_cgroup_memory_limit)

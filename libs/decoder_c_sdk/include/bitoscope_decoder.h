@@ -19,7 +19,7 @@ typedef struct bitoscope_annotations bitoscope_annotations;
 typedef struct bitoscope_job_output bitoscope_job_output;
 typedef struct bitoscope_job_input bitoscope_job_input;
 
-#define BITOSCOPE_NONE (-3)
+#define BITOSCOPE_NONE (-200)
 
 #define BITOSCOPE_EDGE_RISING 0
 #define BITOSCOPE_EDGE_FALLING 1
@@ -27,7 +27,7 @@ typedef struct bitoscope_job_input bitoscope_job_input;
 
 uint32_t bitoscope_input_channels(const bitoscope_decode_input* in);
 
-int bitoscope_level(bitoscope_decode_input* in, uint32_t channel, uint64_t sample);
+int bitoscope_level(bitoscope_decode_input* in, uint32_t channel, uint64_t sample, int* level);
 
 int bitoscope_next_edge(bitoscope_decode_input* in, uint32_t channel, uint64_t from, int kind, uint64_t* at);
 
@@ -41,6 +41,27 @@ int bitoscope_next_change2_limit(bitoscope_decode_input* in, uint32_t channel_a,
                                  uint64_t from, uint64_t limit, uint64_t* at, uint32_t* which);
 
 int bitoscope_bits(bitoscope_decode_input* in, uint32_t channel, uint64_t first, uint32_t n, uint64_t* value);
+
+/* IMPLEMENT: One line bitoscope_for_each_change() watches: its channel and the edges that count (BITOSCOPE_EDGE_...). */
+typedef struct bitoscope_watched_line {
+  uint32_t channel;
+  int edge;
+} bitoscope_watched_line;
+
+typedef struct bitoscope_line_change {
+  uint64_t at;
+  uint32_t changed;
+  uint32_t before;
+  uint32_t after;
+  uint32_t sampled;
+} bitoscope_line_change;
+
+/* IMPLEMENT: Called once per change, in order. Return BITOSCOPE_OK to go on; any other value stops the walk and is what
+ * bitoscope_for_each_change() answers. */
+typedef int (*bitoscope_change_fn)(void* user, const bitoscope_line_change* change);
+
+int bitoscope_for_each_change(bitoscope_decode_input* in, const bitoscope_watched_line* watched, size_t num_watched,
+                              const uint32_t* sampled, size_t num_sampled, bitoscope_change_fn on_change, void* user);
 
 int bitoscope_sample_at(bitoscope_decode_input* in, uint32_t channel, uint64_t start, uint64_t num, uint64_t den,
                         uint64_t k0, uint32_t n, uint64_t* value);
@@ -78,6 +99,15 @@ typedef struct bitoscope_annotation {
   uint64_t value;
 } bitoscope_annotation;
 
+typedef struct bitoscope_emit_cursor {
+  bitoscope_annotation* next;
+  bitoscope_annotation* limit;
+} bitoscope_emit_cursor;
+
+bitoscope_emit_cursor* bitoscope_emit_room(bitoscope_annotations* out);
+
+int bitoscope_emit_commit(bitoscope_annotations* out);
+
 int bitoscope_emit(bitoscope_annotations* out, uint64_t begin, uint64_t end, uint32_t row, uint32_t cls,
                    uint64_t value);
 
@@ -85,8 +115,6 @@ int bitoscope_emit_bytes(bitoscope_annotations* out, uint64_t begin, uint64_t en
                          const uint8_t* bytes, size_t length);
 
 int bitoscope_settle(bitoscope_annotations* out, uint64_t sample);
-uint64_t bitoscope_settle_due(const bitoscope_annotations* out);
-uint64_t bitoscope_progress_step(const bitoscope_annotations* out);
 
 /* IMPLEMENT: An item's kind. A words output carries DATA (value = the word) and BOUNDARY (the end of a frame); an
  * spi-transfers output carries BEGIN (chip select went active), DATA (value = mosi | miso << 32) and
@@ -130,7 +158,7 @@ typedef int (*bitoscope_list_decoders_fn)(void* user, bitoscope_decoders* decode
 int bitoscope_run_decoder_plugin(int argc, char** argv, bitoscope_list_decoders_fn list_decoders, void* user);
 
 #define BITOSCOPE_OPTION_STRING 0  /* IMPLEMENT: any text (within allowed_values, when given) */
-#define BITOSCOPE_OPTION_INTEGER 1 /* IMPLEMENT: a whole number that fits an int64, within minimum and maximum */
+#define BITOSCOPE_OPTION_INTEGER 1 /* IMPLEMENT: a whole number that fits an int64, within min and max */
 
 #define BITOSCOPE_VALUE_NONE 0     /* IMPLEMENT: no value: the class's name is the whole text ("Start") */
 #define BITOSCOPE_VALUE_HEX 1      /* IMPLEMENT: "0x" and upper-case hex digits ("Data: 0x41", or "0x41" with no name) */
@@ -138,7 +166,7 @@ int bitoscope_run_decoder_plugin(int argc, char** argv, bitoscope_list_decoders_
 #define BITOSCOPE_VALUE_N_OF_M 3   /* IMPLEMENT: "name (N of M bits)": N in the value's low 32 bits, M in its high 32 */
 #define BITOSCOPE_VALUE_DECIMAL 4  /* IMPLEMENT: the value in decimal ("Length: 12", or "12" with no name) */
 #define BITOSCOPE_VALUE_N_OF_M_BYTES 5 /* IMPLEMENT: "name (N of M bytes)": N in the low 32 bits, M in the high 32 */
-#define BITOSCOPE_VALUE_BYTES 6
+#define BITOSCOPE_VALUE_BYTES 6    /* IMPLEMENT: a value wider than 64 bits: emitted with bitoscope_emit_bytes(), shown as hex bytes */
 
 /* IMPLEMENT: What a decoder's stream carries. 0 is not a type: a declaration that leaves it is refused. */
 #define BITOSCOPE_STREAM_WORDS 1         /* IMPLEMENT: words of 1-32 bits, and the boundaries between frames */
@@ -149,7 +177,7 @@ int bitoscope_run_decoder_plugin(int argc, char** argv, bitoscope_list_decoders_
 typedef struct bitoscope_decoder_channel {
   const char* name;        /* IMPLEMENT: required, unique in the decoder: what the user binds ("rx=3") */
   const char* description;
-  int required;            /* IMPLEMENT: 1: every job binds it; 0: optional */
+  int optional;            /* IMPLEMENT: 0: every job binds it; 1: a job may leave it unbound */
   const char* display;     /* IMPLEMENT: what a user READS in place of name; NULL or "": host makes it from name */
 } bitoscope_decoder_channel;
 
@@ -182,7 +210,7 @@ typedef struct bitoscope_decoder_input {
   const char* description;
   int type;                /* IMPLEMENT: BITOSCOPE_STREAM_... */
   uint32_t width;          /* IMPLEMENT: the word width it reads; 0: any */
-  int required;            /* IMPLEMENT: 1: every job binds it; 0: optional */
+  int optional;            /* IMPLEMENT: 0: every job binds it; 1: a job may leave it unbound */
   const char* display;     /* IMPLEMENT: what a user READS in place of name; NULL or "": host makes it from name */
 } bitoscope_decoder_input;
 
@@ -195,10 +223,10 @@ typedef struct bitoscope_decoder_option {
   const char* default_value; /* IMPLEMENT: as the user would write it; allowed, within the limits, not unsupported */
   const char* const* allowed_values; /* IMPLEMENT: the only values allowed; none: any (within the limits) */
   size_t num_allowed_values;
-  int has_minimum;           /* IMPLEMENT: an integer option's limits, inclusive */
-  int64_t minimum;
-  int has_maximum;
-  int64_t maximum;
+  int has_min;               /* IMPLEMENT: an integer option's limits, inclusive */
+  int64_t min;
+  int has_max;
+  int64_t max;
   const char* const* unsupported_values; // IMPLEMENT: values this decoder does not implement yet: refused with "not supported yet"
   size_t num_unsupported_values;
   const char* display;       /* IMPLEMENT: what a user READS in place of name; NULL or "": host makes it from name */
@@ -322,16 +350,23 @@ typedef struct bitoscope_decode_job {
   const bitoscope_job_input* inputs;
   size_t num_inputs;
   uint64_t progress_step;
+  /* IMPLEMENT: 0: total_samples is the capture's length (0 in a check before the capture exists). 1: the capture is
+   * still being made and total_samples is the most it can hold; it may end sooner. The input then ends where the
+   * capture ends (bitoscope_sample_count() says final), and an annotation or item past that end fails the job: never
+   * end one at total_samples without having read that far. */
+  int total_is_bound;
 } bitoscope_decode_job;
 
 /* IMPLEMENT: Optional: your decoder's own refusals that depend on the capture - a sample rate too low for the baud
  * rate, "one of rx and tx is needed" - on the SDK's main thread, after the SDK's checks (above).
  * BITOSCOPE_OK accepts; anything else refuses the job, with the reason you give with
  * bitoscope_reply_message(reply, ...), which the host shows as it is. Called for the host's CHECK and
- * again before a DECODE is started. */
+ * again before a DECODE is started. A decoder that reads back further than the input's window holds says how many
+ * samples of one channel it needs at once with bitoscope_reply_look_ahead_samples(reply, samples) before it returns
+ * BITOSCOPE_OK; the host sizes the job's ring from it, or refuses the job. */
 typedef int (*bitoscope_check_fn)(void* user, const bitoscope_decode_job* job, bitoscope_reply* reply);
 
-int bitoscope_reply_look_ahead(bitoscope_reply* reply, uint64_t samples);
+int bitoscope_reply_look_ahead_samples(bitoscope_reply* reply, uint64_t samples);
 
 /* IMPLEMENT: Decodes one job: reads `in` (above), emits into `out`, and returns BITOSCOPE_OK when the capture is
  * decoded. Anything else fails the job - say why with bitoscope_fail_decode(in, reason) first, or the
@@ -397,6 +432,8 @@ int bitoscope_set_decoder_plugin_runs_scripts(bitoscope_decoders* decoders, int 
 int bitoscope_find_job_channel(const bitoscope_decode_job* job, const char* name, uint32_t* input_channel);
 
 const char* bitoscope_find_job_option(const bitoscope_decode_job* job, const char* name);
+
+int bitoscope_find_job_option_int(const bitoscope_decode_job* job, const char* name, int64_t* value);
 
 int bitoscope_output_wanted(const bitoscope_decode_job* job, const char* name, uint32_t* index);
 

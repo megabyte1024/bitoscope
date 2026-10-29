@@ -109,18 +109,18 @@ decoder {
   name = "cobs",
   version = "0.1.0",
   inputs = {
-    { name = "in", description = "encoded bytes", type = "words", width = 8, required = true, display = "Input" },
+    { name = "in", description = "encoded bytes", type = "words", width = 8, display = "Input" },
   },
   options = {
     { name = "delimiter", description = "byte that ends packet; non-zero: every byte is XORed with it",
-      type = "integer", default = 0, min = 0, max = 255, display = "Delimiter" },
+      type = "integer", default_value = 0, min = 0, max = 255, display = "Delimiter" },
   },
   outputs = {
     { name = "bytes", description = "decoded bytes, boundary at each packet end", type = "words", width = 8,
       carries = "cobs" },
   },
   classes = {
-    { id = CLASS_DATA, name = "", format = "hex", digits = 2, role = "data" },
+    { id = CLASS_DATA, name = "", format = "hex", hex_digits = 2, role = "data" },
     { id = CLASS_DELIMITER, name = "Delimiter", role = "stop" },
     { id = CLASS_DELIMITER_INSIDE_BLOCK, name = "Delimiter inside block", format = "n_of_m_bytes", role = "error" },
     { id = CLASS_PACKET_TRUNCATED, name = "Packet truncated", role = "error" },

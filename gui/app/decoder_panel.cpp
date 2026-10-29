@@ -13,6 +13,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -117,7 +118,7 @@ void GuiApp::startDecoders() {
 }
 
 void GuiApp::endDecoders() {
-  for (auto& [id, ui] : sessionUi_) ui.decoderRunner.reset();
+  for (auto& [id, ui] : sessionUi_) ui.decodes.cancel();
   decoders_.reset();
 }
 
@@ -126,20 +127,23 @@ const decode::DecoderRegistry& GuiApp::decoderRegistry() const {
   return decoders_ ? decoders_->registry() : none;
 }
 
-std::vector<gd::CapturedChannel> GuiApp::capturedChannelsFor(const SessionUi& ui) {
+std::vector<gd::CapturedChannel> GuiApp::capturedChannelsFor(const SessionUi& ui,
+                                                             std::span<const std::uint32_t> devices) {
   constexpr std::size_t noDeviceChannels = 0;
-  return gd::bindableChannels(ui.keptDeviceChannels, noDeviceChannels, ui.channelNames);
+  return gd::bindableChannels(devices, noDeviceChannels, ui.channelNames);
 }
 
-GuiApp::SessionUi* GuiApp::decodeRunOwner(std::uint64_t run) {
+GuiApp::SessionUi* GuiApp::decodeRunOwner(std::uint64_t run, gui_session::SessionId* id) {
   for (auto& [sessionId, ui] : sessionUi_) {
-    if (run != 0 && ui.decoderAnnotations.run() == run) return &ui;
+    if (run == 0 || ui.decoderAnnotations.run() != run) continue;
+    if (id != nullptr) *id = sessionId;
+    return &ui;
   }
   return nullptr;
 }
 
 void GuiApp::letGoDecodes(SessionUi& ui) {
-  ui.decoderRunner.reset();
+  ui.decodes.cancel();
   ui.laneView.reset();
   ++ui.laneViewSerial;
   ui.decoderAnnotations.captureLetGo();
@@ -152,12 +156,19 @@ void GuiApp::runDecodersForSession(gui_session::SessionId id, SessionUi& ui) {
 }
 
 void GuiApp::decodeSessionAgain(gui_session::SessionId id, SessionUi& ui) {
-  ui.decoderRunner.reset();
+  ui.decodes.cancel();
   ui.laneView.reset();
   ++ui.laneViewSerial;
   ui.decoderAnnotations.setAsideForRecompute();
   startDecodeRun(id, ui);
   ui.decoderAnnotations.dropSetAside();
+}
+
+void GuiApp::showCapturedLanes(SessionUi& ui) {
+  if (auto laneView = gd::signalViewForOutcome(*ui.capture.kept())) {
+    ui.laneView = std::move(*laneView);
+    ++ui.laneViewSerial;
+  }
 }
 
 void GuiApp::startDecodeRun(gui_session::SessionId id, SessionUi& ui) {
@@ -173,20 +184,40 @@ void GuiApp::startDecodeRun(gui_session::SessionId id, SessionUi& ui) {
                 session != nullptr ? session->name : std::to_string(id), view.error());
     return;
   }
-  if (auto laneView = gd::signalViewForOutcome(*ui.capture.kept())) {
-    ui.laneView = std::move(*laneView);
-    ++ui.laneViewSerial;
-  }
-  if (ui.decoders.empty()) return;
-
-  const std::vector<gd::CapturedChannel> captured = capturedChannelsFor(ui);
+  showCapturedLanes(ui);
   const decode::CaptureFacts facts{(*view)->sampleRateMilliHz(), (*view)->channelCount(), (*view)->sampleCount()};
+  std::optional<PreparedRun> prepared =
+    prepareDecodeRun(id, ui, ui.keptDeviceChannels, facts, [this]() -> std::expected<std::uint64_t, std::string> {
+      const auto freeBytes = memoryProbe_->freePhysicalBytes();
+      return gd::decoderBudgetBytes(gd::budgetMibFromEnvironment(), prefs_.decoderMemoryBudgetMib,
+                                    freeBytes ? std::optional<std::uint64_t>(*freeBytes) : std::nullopt);
+    });
+  if (!prepared) return;
+  auto capture = gd::runCaptureForOutcome(*ui.capture.kept());
+  ui.decodes.run(gd::DecodeRun{
+    prepared->id, std::make_unique<gd::DecoderRunner>(
+                    prepared->id, std::move(*views), std::move(prepared->plan), eventQueue_, std::move(prepared->memory),
+                    decoders_->threadSetup(), gd::ProgressClock{}, std::function<void(std::size_t)>{},
+                    capture ? std::optional<gd::RunCapture>(std::move(*capture)) : std::nullopt)});
+}
+
+std::optional<GuiApp::PreparedRun> GuiApp::prepareDecodeRun(gui_session::SessionId id, SessionUi& ui,
+                                                            std::span<const std::uint32_t> devices,
+                                                            const decode::CaptureFacts& facts, const RunBudget& budget) {
+  if (ui.decoders.empty() || !decoders_) return std::nullopt;
+  const std::vector<gd::CapturedChannel> captured = capturedChannelsFor(ui, devices);
   gd::ValidatedChain chain = gd::validateForRun(ui.decoders, decoderRegistry(), captured, facts);
-  if (chain.plan.instances.empty()) return;
+  if (chain.plan.instances.empty()) return std::nullopt;
   const gui_session::Session* session = sessions_.find(id);
   const std::string name = session != nullptr ? session->name : std::to_string(id);
+  const std::expected<std::uint64_t, std::string> budgetBytes = budget();
+  if (!budgetBytes) {
+    logger_.logf(log::LogLevel::info, "decode", "{}: {}", name, budgetBytes.error());
+    return std::nullopt;
+  }
 
-  const std::uint64_t run = nextRun_++;
+  PreparedRun prepared;
+  prepared.id = nextRun_++;
   std::vector<gd::DecoderConfig::AnnotationFormatContext> formats;
   std::vector<gd::DerivationContext> derivations;
   formats.reserve(chain.configIndices.size());
@@ -196,26 +227,74 @@ void GuiApp::startDecodeRun(gui_session::SessionId id, SessionUi& ui) {
     derivations.push_back(
       gd::runDerivationContext(ui.decoders[index], decoderRegistry(), captured, facts.sample_rate_milli_hz));
   }
-  ui.decoderAnnotations.beginRun(run, std::move(chain.configIndices), std::move(formats), std::move(derivations));
-  const auto freeBytes = memoryProbe_->freePhysicalBytes();
-  gd::DecodeMemory memory;
-  memory.budgetBytes =
-    gd::decoderBudgetBytes(gd::budgetMibFromEnvironment(), prefs_.decoderMemoryBudgetMib,
-                           freeBytes ? std::optional<std::uint64_t>(*freeBytes) : std::nullopt);
-  memory.heldBytes = ui.decoderAnnotations.heldBytes();
-  logger_.logf(log::LogLevel::info, "decode", "{}: decoded results may hold {} MiB", name,
-               memory.budgetBytes / gd::kMiB);
-  auto capture = gd::runCaptureForOutcome(*ui.capture.kept());
-  ui.decoderRunner = std::make_unique<gd::DecoderRunner>(
-    run, std::move(*views), std::move(chain.plan), eventQueue_, std::move(memory), decoders_->threadSetup(),
-    gd::ProgressClock{}, std::function<void(std::size_t)>{},
-    capture ? std::optional<gd::RunCapture>(std::move(*capture)) : std::nullopt);
+  ui.decoderAnnotations.beginRun(prepared.id, std::move(chain.configIndices), std::move(formats), std::move(derivations));
+  prepared.memory.budgetBytes = *budgetBytes;
+  prepared.memory.heldBytes = ui.decoderAnnotations.heldBytes();
+  logger_.logf(log::LogLevel::info, "decode", "{}: {}", name, gd::decodedResultsMayHoldText(prepared.memory.budgetBytes));
+  prepared.plan = std::move(chain.plan);
+  return prepared;
+}
+
+gd::DecodeRun GuiApp::startLiveRun(gui_session::SessionId id, SessionUi& ui,
+                                   std::shared_ptr<const gd::LiveRunCapture> capture) {
+  if (!ui.running) return {};
+  const capture::CapturePlan& plan = capture->growing()->plan();
+  const decode::CaptureFacts facts{plan.sampleRateMilliHz(), plan.channels(), capture->boundSamples()};
+  std::optional<PreparedRun> prepared = prepareDecodeRun(id, ui, ui.running->deviceChannels, facts, [this] {
+    return gd::liveRunBudget(*memoryProbe_, gd::budgetMibFromEnvironment(), prefs_.decoderMemoryBudgetMib,
+                             runningCaptures());
+  });
+  if (!prepared) return {};
+  return gd::DecodeRun{prepared->id, std::make_unique<gd::DecoderRunner>(
+                                       prepared->id, std::move(capture), std::move(prepared->plan), eventQueue_,
+                                       std::move(prepared->memory), decoders_->threadSetup())};
+}
+
+std::vector<std::shared_ptr<const capture::CaptureSession>> GuiApp::runningCaptures() {
+  std::vector<std::shared_ptr<const capture::CaptureSession>> running;
+  for (auto& [id, ui] : sessionUi_) {
+    if (!ui.runner || !ui.slot || !ui.running) continue;
+    std::shared_ptr<const capture::CaptureSession> session = ui.slot->view().session();
+    if (session) running.push_back(std::move(session));
+  }
+  return running;
+}
+
+void GuiApp::followLiveDecodes() {
+  for (auto& [id, ui] : sessionUi_) {
+    if (!ui.runner || !ui.slot || !ui.running) continue;
+    gd::LiveAttempt attempt;
+    {
+      const auto view = ui.slot->view();
+      attempt.session = view.session();
+      attempt.generation = view.generation();
+    }
+    attempt.boundSamples = ui.running->requestedSamples;
+    const gui_session::SessionId sessionId = id;
+    SessionUi& panel = ui;
+    const gd::LiveStep step =
+      ui.decodes.follow(attempt, gd::liveDecodingAllowed(*ui.running),
+                        [this, sessionId, &panel](std::shared_ptr<const gd::LiveRunCapture> capture) {
+                          return startLiveRun(sessionId, panel, std::move(capture));
+                        });
+    if (step == gd::LiveStep::Cancelled) ui.decoderAnnotations.captureLetGo();
+  }
 }
 
 void GuiApp::decoderResultReceived(std::uint64_t run, std::size_t decoderIndex,
                                    const std::expected<std::shared_ptr<const gd::DecodedAnnotations>, std::string>& result) {
-  SessionUi* ui = decodeRunOwner(run);
-  if (ui == nullptr || !ui->decoderAnnotations.resultArrived(run, decoderIndex, result)) return;
+  gui_session::SessionId id = 0;
+  SessionUi* ui = decodeRunOwner(run, &id);
+  if (ui == nullptr) return;
+  if (!result.has_value() && ui->decodes.decodeAgainAfterCapture(run, decoderIndex)) {
+    const gui_session::Session* session = sessions_.find(id);
+    logger_.logf(log::LogLevel::info, "decode",
+                 "{}: decoding again after capture, live decoder could not finish beside capture",
+                 session != nullptr ? session->name : std::to_string(id));
+    decodeSessionAgain(id, *ui);
+    return;
+  }
+  if (!ui->decoderAnnotations.resultArrived(run, decoderIndex, result)) return;
   if (!result.has_value()) {
     logger_.logf(log::LogLevel::error, "decode", "decoder failed: {}", result.error());
   }
@@ -320,7 +399,8 @@ bool GuiApp::drawDecoderPicker(SessionUi& ui) {
 GuiApp::DecoderChannelChoices GuiApp::decoderChannelChoices(const SessionUi& ui) {
   DecoderChannelChoices choices;
   const std::size_t deviceChannels = ui.openedFrom.empty() && ui.settings ? ui.settings->channels.size() : 0;
-  choices.captured = gd::bindableChannels(ui.keptDeviceChannels, deviceChannels, ui.channelNames);
+  choices.captured =
+    gd::bindableChannels(gd::settingsChannels(ui.running, ui.keptDeviceChannels), deviceChannels, ui.channelNames);
   choices.labels.push_back(tr("(none)"));
   for (const gd::CapturedChannel& c : choices.captured) {
     choices.labels.push_back(gui_capture::channelChoiceLabel(ui.channelUserNames, ui.channelNames, c.deviceChannel));
@@ -384,7 +464,10 @@ GuiApp::DecoderSettingsChange GuiApp::drawDecoderSettings(SessionUi& ui, std::si
         if (channels.captured[c].deviceChannel == *bound) choice = static_cast<int>(c) + 1;
       }
     }
-    if (comboOf("##ch", choice, channels.labels)) {
+    ImGui::BeginDisabled(ui.decodes.runsLive());
+    const bool channelChosen = comboOf("##ch", choice, channels.labels);
+    ImGui::EndDisabled();
+    if (channelChosen) {
       const std::optional<std::uint32_t> picked =
         choice == 0 ? std::nullopt
                     : std::optional<std::uint32_t>(channels.captured[static_cast<std::size_t>(choice) - 1].deviceChannel);

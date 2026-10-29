@@ -189,7 +189,8 @@ std::string describeEarlyEnd(const bitoscope::capture::CaptureSummary& summary,
                              std::optional<uint64_t> trigger_timeout_s = std::nullopt);
 
 std::optional<std::string> describeUntriggeredMemory(uint64_t samples_floor,
-                                                     const bitoscope::capture::CapturePlan& plan);
+                                                     const bitoscope::capture::CapturePlan& plan,
+                                                     bool taken_as_it_grows = false);
 
 std::expected<std::optional<std::string>, std::string> describeTriggeredMemory(
     uint64_t samples_floor, const bitoscope::trigger::TriggerSpec& spec, const bitoscope::capture::CapturePlan& plan);

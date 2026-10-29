@@ -6,15 +6,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "annotation_memory.h"
 #include "decoder.h"
+
+namespace bitoscope::capture {
+class CaptureSession;
+class MemoryProbe;
+}
 
 namespace bitoscope::gui_decode {
 
@@ -64,6 +71,16 @@ std::optional<std::uint64_t> budgetMibFromEnvironment();
 
 std::uint64_t decoderBudgetBytes(std::optional<std::uint64_t> environmentMib, std::uint64_t preferenceMib,
                                  std::optional<std::uint64_t> freeBytes);
+
+std::expected<std::uint64_t, std::string> liveDecoderBudgetBytes(std::optional<std::uint64_t> environmentMib,
+                                                                 std::uint64_t preferenceMib, std::uint64_t freeBytes,
+                                                                 std::uint64_t capturesStillNeed);
+
+std::expected<std::uint64_t, std::string> liveRunBudget(
+  bitoscope::capture::MemoryProbe& probe, std::optional<std::uint64_t> environmentMib, std::uint64_t preferenceMib,
+  std::span<const std::shared_ptr<const bitoscope::capture::CaptureSession>> running);
+
+std::string decodedResultsMayHoldText(std::uint64_t budgetBytes);
 
 std::string budgetFailureText(const bitoscope::decode::Decoder& decoder,
                               const bitoscope::waveform_view::GroupsRefusal& refusal, std::uint64_t budgetBytes);

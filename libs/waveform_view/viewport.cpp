@@ -77,6 +77,14 @@ void Viewport::zoomTo(double samplesPerPixel, double sampleZeroPixel, uint64_t t
   clampToLimits(totalSamples);
 }
 
+void Viewport::keepAfterTrim(uint64_t firstKept, uint64_t keptSamples) {
+  if (samplesPerPixel_ > maxSamplesPerPixelFor(keptSamples)) {
+    zoomToFit(keptSamples);
+    return;
+  }
+  zoomTo(samplesPerPixel_, sampleToPixel(static_cast<double>(firstKept)), keptSamples);
+}
+
 void Viewport::zoom1to1(double pixelX, uint64_t totalSamples) {
   const double anchorSample = pixelToSample(pixelX);
   samplesPerPixel_ = 1.0;

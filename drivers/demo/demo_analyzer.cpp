@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <map>
 #include <memory>
 #include <utility>
 
@@ -18,7 +17,6 @@ namespace sim = bitoscope::sim;
 using bitoscope::plugin::Capture;
 using bitoscope::plugin::Layout;
 using bitoscope::plugin::PropertyNode;
-using bitoscope::plugin::PropertyValue;
 using bitoscope::plugin::Sink;
 
 namespace demo_plugin {
@@ -42,7 +40,7 @@ using bitoscope::plugin::IntegerType;
 using bitoscope::plugin::Property;
 using bitoscope::plugin::Unit;
 
-const std::vector<std::string> kEncodings{"channel_major", "sample_major"};
+const std::vector<std::string> kLayouts{"channel_major", "sample_major"};
 const std::vector<std::string> kPacings{"realtime", "unpaced"};
 const std::vector<std::string> kSources{"structured", "random", "pattern", "noise"};
 
@@ -57,14 +55,10 @@ PropertyNode node(std::string id, std::string name, bitoscope::plugin::PropertyT
   return PropertyNode{std::move(p)};
 }
 
-std::expected<uint32_t, std::string> itemOf(const std::map<std::string, PropertyValue, std::less<>>& values,
-                                            std::string_view id, size_t items) {
-  const auto it = values.find(id);
-  if (it == values.end()) return 0;
-  if (it->second.enumIndex >= items) {
-    return std::unexpected(std::string(id) + ": item " + std::to_string(it->second.enumIndex) + " does not exist");
-  }
-  return it->second.enumIndex;
+std::expected<uint32_t, std::string> itemOf(const Capture& capture, std::string_view id, size_t items) {
+  const uint32_t item = capture.enumIndex(id);
+  if (item >= items) return std::unexpected(std::string(id) + ": item " + std::to_string(item) + " does not exist");
+  return item;
 }
 
 std::vector<bitoscope::plugin::ChannelPreset> demoChannelPresets() {
@@ -91,7 +85,7 @@ std::vector<bitoscope::plugin::ChannelPreset> demoChannelPresets() {
 std::vector<PropertyNode> demoProperties() {
   const sim::DemoFacetConfig d;
   return {
-      node("encoding", "Encoding", EnumerationType{kEncodings, {}, 0, 0}, Unit::none,
+      node("layout", "Layout", EnumerationType{kLayouts, {}, 0, 0}, Unit::none,
            "How capture's samples are laid out: channel_major (each channel's bytes together) or sample_major"),
       node("pacing", "Pacing", EnumerationType{kPacings, {}, 0, 0}, Unit::none,
            "realtime: each chunk is written once its signal has happened, as device that cannot wait; unpaced: as "
@@ -111,30 +105,28 @@ std::vector<PropertyNode> demoProperties() {
            Unit::samples, "Sample marker rises at"),
       node("marker_channel", "Marker channel", IntegerType{0, 31, d.marker_channel}, Unit::none,
            "Physical channel marker is on"),
+      node("test_pattern", "Test pattern", BooleanType{d.test_pattern, bitoscope::plugin::BooleanStyle::onOff},
+           Unit::none, "Counter: physical channel c carries bit c of sample number; overrides source"),
   };
 }
 
-std::expected<sim::DemoFacetConfig, std::string> demoConfigFrom(
-    const std::map<std::string, PropertyValue, std::less<>>& values) {
+std::expected<sim::DemoFacetConfig, std::string> demoConfigFrom(const Capture& capture) {
   sim::DemoFacetConfig config;
-  const auto integer = [&values](std::string_view id, int64_t fallback) {
-    const auto it = values.find(id);
-    return it == values.end() ? fallback : it->second.integer;
-  };
-  auto encoding = itemOf(values, "encoding", kEncodings.size());
-  if (!encoding) return std::unexpected(encoding.error());
-  config.encoding = *encoding == 1 ? sim::WireEncoding::SampleMajor : sim::WireEncoding::ChannelMajor;
-  auto pacing = itemOf(values, "pacing", kPacings.size());
+  auto layout = itemOf(capture, "layout", kLayouts.size());
+  if (!layout) return std::unexpected(layout.error());
+  config.encoding = *layout == 1 ? sim::WireEncoding::SampleMajor : sim::WireEncoding::ChannelMajor;
+  auto pacing = itemOf(capture, "pacing", kPacings.size());
   if (!pacing) return std::unexpected(pacing.error());
   config.realtime = *pacing == 0;
-  auto source = itemOf(values, "source", kSources.size());
+  auto source = itemOf(capture, "source", kSources.size());
   if (!source) return std::unexpected(source.error());
   config.source = static_cast<sim::DemoSource>(*source);
-  config.chunk_samples = static_cast<uint32_t>(integer("chunk_samples", config.chunk_samples));
-  config.seed = static_cast<uint64_t>(integer("seed", static_cast<int64_t>(config.seed)));
-  if (const auto it = values.find("marker"); it != values.end()) config.marker = it->second.boolean;
-  config.marker_at = static_cast<uint64_t>(integer("marker_at", static_cast<int64_t>(config.marker_at)));
-  config.marker_channel = static_cast<uint32_t>(integer("marker_channel", config.marker_channel));
+  config.chunk_samples = static_cast<uint32_t>(capture.integer("chunk_samples"));
+  config.seed = static_cast<uint64_t>(capture.integer("seed"));
+  config.marker = capture.boolean("marker");
+  config.marker_at = static_cast<uint64_t>(capture.integer("marker_at"));
+  config.marker_channel = static_cast<uint32_t>(capture.integer("marker_channel"));
+  config.test_pattern = capture.boolean("test_pattern");
   return config;
 }
 
@@ -156,7 +148,7 @@ std::expected<void, std::string> DemoAnalyzer::prepare(const Capture& capture, S
   };
   if (capture.buffered && capture.sampleLimit == 0) return refuse("buffered mode requires nonzero sample_limit");
   const uint64_t hz = capture.sampleRateMilliHz / 1000;
-  const auto read = demoConfigFrom(capture.properties);
+  const auto read = demoConfigFrom(capture);
   if (!read) return refuse(read.error());
   const sim::DemoFacetConfig config = *read;
   if (auto checked = sim::checkDemoConfig(config); !checked) return refuse(checked.error());
@@ -171,7 +163,11 @@ std::expected<void, std::string> DemoAnalyzer::prepare(const Capture& capture, S
   if (!marker) return refuse(marker.error());
 
   std::optional<Stream> stream;
-  if (config.source == sim::DemoSource::Random) {
+  if (config.test_pattern) {
+    auto s = sim::CounterStream::create(capture.channelMask, config.encoding);
+    if (!s) return refuse(s.error());
+    stream.emplace(std::move(*s));
+  } else if (config.source == sim::DemoSource::Random) {
     auto s = sim::RandomStream::create(config.seed, capture.channelMask, config.encoding, *chunk);
     if (!s) return refuse(s.error());
     stream.emplace(std::move(*s));
@@ -203,6 +199,7 @@ std::expected<void, std::string> DemoAnalyzer::prepare(const Capture& capture, S
 
 std::string DemoAnalyzer::sourceName() const {
   const sim::DemoFacetConfig& c = captureConfig_;
+  if (c.test_pattern) return "counter test pattern";
   std::string marker;
   if (c.marker) {
     marker = ", marker: channel " + std::to_string(c.marker_channel) + " rises at sample " + std::to_string(c.marker_at);
@@ -316,8 +313,9 @@ bitoscope::plugin::DriverDescription demoDriver(DemoHooks hooks) {
   };
   description.identify = [](const plugin::FoundDevice&, plugin::Device& device)
       -> std::expected<void, plugin::DeviceFailure> {
-    if (!device.setName(kDemoDeviceName) || !device.add(demoAnalyzerInfo())) {
-      return std::unexpected(plugin::DeviceFailure{plugin::DeviceProblem::other, "demo's logic analyzer was refused"});
+    (void)device.setName(kDemoDeviceName);
+    if (auto added = device.add(demoAnalyzerInfo()); !added) {
+      return std::unexpected(plugin::DeviceFailure{plugin::DeviceProblem::other, std::move(added.error())});
     }
     return {};
   };

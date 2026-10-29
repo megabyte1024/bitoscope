@@ -20,6 +20,7 @@
 #include "decoder_plugin_client.h"
 #include "decoder_plugin_pool.h"
 #include "decoder_registry.h"
+#include "growing_capture.h"
 #include "ipc_decoder.h"
 #include "raw_capture_buffer.h"
 
@@ -73,6 +74,11 @@ class PluginDecoder final : public decode::Decoder {
                                                       decode::StreamInputs& inputs, decode::AnnotationSink& sink,
                                                       decode::StreamOutputs* outputs = nullptr);
 
+  std::expected<void, std::string> decodeGrowingCapture(std::shared_ptr<const GrowingCapture> capture,
+                                                        std::shared_ptr<const CaptureEnd> end, uint64_t bound_samples,
+                                                        decode::AnnotationSink& sink,
+                                                        decode::StreamOutputs* outputs = nullptr);
+
   ipc::decoder::JobSetup jobSetup(const decode::CaptureFacts& facts, std::vector<std::string> wanted = {}) const;
 
  protected:
@@ -84,6 +90,7 @@ class PluginDecoder final : public decode::Decoder {
  private:
   std::expected<FeedFunction, std::string> feedOf(const decode::SignalView& view,
                                                   const ipc::decoder::JobSetup& setup) const;
+  decode::CaptureFacts factsForJob(decode::CaptureFacts facts) const;
   std::vector<std::string> wantedOutputs();
   std::vector<uint32_t> bytesClasses() const;
   std::expected<void, std::string> checkSinkTakesBytes(const decode::AnnotationSink& sink) const;
@@ -100,6 +107,8 @@ class PluginDecoder final : public decode::Decoder {
     const capture::RawCaptureBuffer* buffer = nullptr;
     capture::CaptureExtent extent;
     capture::ExtentTail tail = capture::ExtentTail::Exact;
+    std::shared_ptr<const GrowingCapture> growing;
+    std::shared_ptr<const CaptureEnd> end;
   };
 
   std::shared_ptr<DecoderPluginClient> client_;

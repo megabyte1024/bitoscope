@@ -53,6 +53,20 @@ class MemoryItemInput {
   bitoscope_decode_input* in_ = nullptr;
 };
 
+class ScanCounter {
+ public:
+  explicit ScanCounter(bitoscope_decode_input* in) : in_(in) { bitoscope_test_count_scans(in_, &words_); }
+  ScanCounter(const ScanCounter&) = delete;
+  ScanCounter& operator=(const ScanCounter&) = delete;
+  ~ScanCounter() { bitoscope_test_count_scans(in_, nullptr); }
+
+  uint64_t words() const { return words_; }
+
+ private:
+  bitoscope_decode_input* in_;
+  uint64_t words_ = 0;
+};
+
 class CollectedAnnotations {
  public:
   explicit CollectedAnnotations(MemoryInput& input);
@@ -103,7 +117,7 @@ struct TestDecode {
   std::map<std::string, std::vector<StreamItem>, std::less<>> items;
   std::vector<bitoscope_settled> settles;
   std::vector<std::vector<uint8_t>> bytes;
-  uint64_t lookAhead = 0;
+  uint64_t lookAheadSamples = 0;
 };
 
 class TestPlugin {

@@ -456,7 +456,7 @@ void drawAndPresent(GLFWwindow* window, WindowState& state, VulkanDevice& vulkan
 int runFrames(GLFWwindow* window, WindowState& state, VulkanDevice& vulkan, GuiApp& app,
               ColorSchemeWatcher& colorScheme, LinuxPlatformServices& platform) {
   std::uint64_t eventsSeen = state.events;
-  bitoscope::gui_linux::FrameLoopHooks hooks;
+  bitoscope::gui_frame_pacing::FrameLoopHooks hooks;
   hooks.handleEvents = [window, &state] {
     glfwPollEvents();
     applyRestoreSize(window, state);
@@ -476,7 +476,9 @@ int runFrames(GLFWwindow* window, WindowState& state, VulkanDevice& vulkan, GuiA
     return app.closeConfirmed();
   };
   hooks.observeWindow = [&] {
-    bitoscope::gui_linux::WindowObservation observed;
+    bitoscope::gui_frame_pacing::WindowObservation observed;
+    // WHY: GLFW's Wayland backend always reports not iconified, so a minimized Wayland window counts as Visible;
+    // GLFW has no occlusion query, so occluded stays false.
     observed.iconified = glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_TRUE;
     glfwGetFramebufferSize(window, &observed.framebufferWidth, &observed.framebufferHeight);
     observed.eventsHandled = state.events != eventsSeen;
@@ -489,15 +491,23 @@ int runFrames(GLFWwindow* window, WindowState& state, VulkanDevice& vulkan, GuiA
   };
   hooks.pumpBackground = [&] {
     takePlatformNotes(app, colorScheme, platform);
-    bitoscope::gui_linux::AppObservation observed;
+    bitoscope::gui_frame_pacing::AppObservation observed;
     observed.backgroundChanged = app.pumpBackground();
     observed.captureRunning = app.captureRunning();
+    observed.captureAdvanced = app.captureAdvanced();
     observed.asyncWorkInFlight = app.asyncWorkInFlight();
     observed.uiNeedsMore = app.wantsMoreFrames();
     observed.reduceIdleFrameRate = app.reduceIdleFrameRate();
     return observed;
   };
-  hooks.drawFrame = [&] { renderFrame(window, state, vulkan, app); };
+  std::string shownTitle = kWindowTitle;
+  hooks.drawFrame = [&] {
+    renderFrame(window, state, vulkan, app);
+    if (std::string title = app.windowTitle(kWindowTitle); title != shownTitle) {
+      glfwSetWindowTitle(window, title.c_str());
+      shownTitle = std::move(title);
+    }
+  };
   hooks.failed = [&state] { return !state.fatalError.empty(); };
   hooks.wait = [](std::uint32_t timeoutMs) { glfwWaitEventsTimeout(static_cast<double>(timeoutMs) / 1000.0); };
   hooks.nowMs = [] {
@@ -506,7 +516,7 @@ int runFrames(GLFWwindow* window, WindowState& state, VulkanDevice& vulkan, GuiA
                                         .count());
   };
   bitoscope::gui_frame_pacing::FramePacer pacer;
-  const int exitCode = bitoscope::gui_linux::runFrameLoop(hooks, pacer);
+  const int exitCode = bitoscope::gui_frame_pacing::runFrameLoop(hooks, pacer);
   if (exitCode != 0) {
     showError(state.fatalError);
   }

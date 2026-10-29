@@ -12,6 +12,7 @@
 #include "annotation_groups.h"
 #include "annotation_lane_layout.h"
 #include "annotation_reader.h"
+#include "lane_coverage.h"
 
 namespace bitoscope::waveform_view {
 
@@ -29,12 +30,15 @@ struct LaneTextMark {
 struct AnnotationLaneSummary {
   std::vector<LaneTextMark> textMarks;
   std::vector<std::uint32_t> tickColumns;
+  std::size_t decided = 0;
 };
 
 AnnotationLaneSummary summarizeLane(const AnnotationGroups& groups, double firstVisibleSample, double samplesPerPixel,
                                     std::uint32_t widthPixels, std::uint32_t minTextColumns = 8);
 AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibleSample, double samplesPerPixel,
                                     std::uint32_t widthPixels, std::uint32_t minTextColumns = 8);
+AnnotationLaneSummary summarizeLane(AnnotationReader& reader, const LaneCoverage& coverage, double firstVisibleSample,
+                                    double samplesPerPixel, std::uint32_t widthPixels, std::uint32_t minTextColumns = 8);
 
 std::optional<AnnotationRef> annotationAtColumn(const AnnotationGroups& groups, double firstVisibleSample,
                                                 double samplesPerPixel, std::uint32_t widthPixels,

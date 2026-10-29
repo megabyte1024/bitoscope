@@ -207,7 +207,7 @@ dec::JobSetup PluginDecoder::jobSetup(const decode::CaptureFacts& facts, std::ve
     if (const auto position = channel(c.name)) setup.channels.push_back({c.name, *position});
   }
   for (const auto& [option, value] : resolvedOptions()) setup.options.push_back({option, value});
-  setup.facts = {facts.sample_rate_milli_hz, facts.channel_count, facts.total_samples};
+  setup.facts = {facts.sample_rate_milli_hz, facts.channel_count, facts.total_samples, facts.total_is_bound};
   setup.outputs = std::move(wanted);
   const decode::InputMap& bound = boundInputs();
   for (const dec::InputSpec& i : info_.inputs) {
@@ -220,7 +220,7 @@ dec::JobSetup PluginDecoder::jobSetup(const decode::CaptureFacts& facts, std::ve
 std::expected<void, std::string> PluginDecoder::checkCaptureFacts(const decode::CaptureFacts& facts) const {
   window_warning_.reset();
   if (facts.sample_rate_milli_hz == 0) return std::unexpected("capture has no sample rate");
-  const dec::JobSetup setup = jobSetup(facts);
+  const dec::JobSetup setup = jobSetup(factsForJob(facts));
   auto answer = pool_ ? pool_->checkJob(setup) : client_->checkJob(setup);
   if (!answer) return std::unexpected(std::move(answer.error()));
   look_ahead_samples_ = answer->lookAheadSamples;
@@ -234,10 +234,47 @@ std::expected<void, std::string> PluginDecoder::decodeCapture(const capture::Raw
                                                               decode::AnnotationSink& sink, decode::StreamOutputs* outputs) {
   auto view = capture::RawBufferSignalView::create(buffer, extent, tail);
   if (!view) return std::unexpected(std::move(view.error()));
-  capture_ = CaptureSource{&*view, &buffer, extent, tail};
+  capture_ = CaptureSource{&*view, &buffer, extent, tail, nullptr, nullptr};
   auto decoded = decode(*view, sink, outputs);
   capture_ = CaptureSource{};
   return decoded;
+}
+
+namespace {
+
+class GrowingFacts final : public decode::SignalView {
+ public:
+  GrowingFacts(const capture::CapturePlan& plan, uint64_t bound_samples)
+      : channels_(plan.channels()), rate_milli_hz_(plan.sampleRateMilliHz()), bound_samples_(bound_samples) {}
+
+  uint32_t channelCount() const override { return channels_; }
+  uint64_t sampleCount() const override { return bound_samples_; }
+  uint64_t sampleRateMilliHz() const override { return rate_milli_hz_; }
+  bool level(uint32_t, uint64_t) const override { return false; }
+  std::optional<uint64_t> nextEdge(uint32_t, uint64_t, decode::EdgeKind) const override { return std::nullopt; }
+
+ private:
+  uint32_t channels_;
+  uint64_t rate_milli_hz_;
+  uint64_t bound_samples_;
+};
+
+}
+
+std::expected<void, std::string> PluginDecoder::decodeGrowingCapture(std::shared_ptr<const GrowingCapture> growing,
+                                                                     std::shared_ptr<const CaptureEnd> end,
+                                                                     uint64_t bound_samples, decode::AnnotationSink& sink,
+                                                                     decode::StreamOutputs* outputs) {
+  const GrowingFacts view(growing->plan(), bound_samples);
+  capture_ = CaptureSource{&view, nullptr, {}, capture::ExtentTail::Exact, std::move(growing), std::move(end)};
+  auto decoded = decode(view, sink, outputs);
+  capture_ = CaptureSource{};
+  return decoded;
+}
+
+decode::CaptureFacts PluginDecoder::factsForJob(decode::CaptureFacts facts) const {
+  if (capture_.growing) facts.total_is_bound = true;
+  return facts;
 }
 
 std::expected<void, std::string> PluginDecoder::decodeCaptureMixed(const capture::RawCaptureBuffer& buffer,
@@ -247,7 +284,7 @@ std::expected<void, std::string> PluginDecoder::decodeCaptureMixed(const capture
                                                                    decode::StreamOutputs* outputs) {
   auto view = capture::RawBufferSignalView::create(buffer, extent, tail);
   if (!view) return std::unexpected(std::move(view.error()));
-  capture_ = CaptureSource{&*view, &buffer, extent, tail};
+  capture_ = CaptureSource{&*view, &buffer, extent, tail, nullptr, nullptr};
   const decode::CaptureFacts facts{view->sampleRateMilliHz(), view->channelCount(), view->sampleCount()};
   auto decoded = decodeMixed(*view, inputs, facts, sink, outputs);
   capture_ = CaptureSource{};
@@ -359,13 +396,17 @@ std::expected<FeedFunction, std::string> PluginDecoder::feedOf(const decode::Sig
     feed_options.min_skip_samples = options_.min_skip_samples;
     feed_options.before_allocate = options_.job.before_allocate;
     feed_options.before_feed = options_.before_feed;
+    if (capture_.growing) {
+      return growingCaptureFeed(capture_.growing, capture_.end, std::move(bound), std::move(feed_options));
+    }
     return captureFeed(*capture_.buffer, capture_.extent, capture_.tail, std::move(bound), std::move(feed_options));
   }
   return viewFeed(view, std::move(bound), options_.job.before_allocate);
 }
 
 std::expected<void, std::string> PluginDecoder::run(const decode::SignalView& view, decode::AnnotationSink& sink) {
-  const dec::JobSetup setup = jobSetup({view.sampleRateMilliHz(), view.channelCount(), view.sampleCount()}, wantedOutputs());
+  const dec::JobSetup setup =
+      jobSetup(factsForJob({view.sampleRateMilliHz(), view.channelCount(), view.sampleCount()}), wantedOutputs());
   auto feed = feedOf(view, setup);
   if (!feed) return std::unexpected(std::move(feed.error()));
   DecodeJobOptions job = sizedFor(options_.job, look_ahead_samples_).job;

@@ -44,32 +44,51 @@ std::optional<AnnotationRef> firstEndingPast(Groups& groups, double column, doub
   return firstEndingAfter(groups, [&](std::uint64_t end) { return quotient(end, first, spp) > column; });
 }
 
+constexpr std::int8_t kUnknownColumn = -1;
+constexpr std::int8_t kManyTouching = 2;
+
+std::vector<std::int8_t> knownColumns(const AnnotationGroups& groups, const LaneCoverage& coverage,
+                                      std::uint32_t width, std::size_t& decided) {
+  std::vector<std::int8_t> known(width, kUnknownColumn);
+  for (std::size_t g = 0; g < groups.groupCount(); ++g) {
+    if (!coverage.decides(g)) return known;
+  }
+  for (std::uint32_t c = 0; c < width; ++c) {
+    std::uint64_t inside = 0;
+    bool touched = false;
+    for (std::size_t g = 0; g < groups.groupCount(); ++g) {
+      const CoverageBounds& b = coverage.at(g, c);
+      const std::uint64_t longest = groups.coverage(g).longest();
+      if (b.lower != 0) inside += b.lower > longest ? 2 : 1;
+      touched = touched || b.upper > 0;
+    }
+    if (inside >= 2) {
+      known[c] = kManyTouching;
+    } else if (!touched) {
+      known[c] = 0;
+    }
+    decided += known[c] != kUnknownColumn ? 1 : 0;
+  }
+  return known;
 }
 
-bool laneNeedsSummary(std::size_t annotationsInView, std::uint32_t widthPixels) {
-  return annotationsInView > kLaneSummaryAnnotationsPerColumn * static_cast<std::size_t>(widthPixels);
-}
-
-AnnotationLaneSummary summarizeLane(const AnnotationGroups& groups, double firstVisibleSample, double samplesPerPixel,
-                                    std::uint32_t widthPixels, std::uint32_t minTextColumns) {
-  AnnotationReader reader(groups);
-  return summarizeLane(reader, firstVisibleSample, samplesPerPixel, widthPixels, minTextColumns);
-}
-
-AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibleSample, double samplesPerPixel,
-                                    std::uint32_t widthPixels, std::uint32_t minTextColumns) {
+AnnotationLaneSummary summarizeColumns(AnnotationReader& reader, std::vector<std::int8_t> known, double first,
+                                       double spp, std::uint32_t widthPixels, std::uint32_t minTextColumns) {
   const AnnotationGroups& groups = reader.groups();
   AnnotationLaneSummary out;
-  if (!groups.usable() || widthPixels == 0 || samplesPerPixel <= 0.0 || groups.size() == 0) return out;
   const std::size_t width = widthPixels;
-  const double first = firstVisibleSample;
-  const double spp = samplesPerPixel;
-
   // WHY: Raw pointers in loops: a Debug build checks every vector access and ran these passes several times slower.
   std::vector<std::size_t> startedStorage(width + 1, 0);
   std::vector<std::size_t> endedStorage(width + 1, 0);
+  std::vector<char> neededStorage(width + 1, 0);
   std::size_t* const started = startedStorage.data();
   std::size_t* const ended = endedStorage.data();
+  char* const needed = neededStorage.data();
+  for (std::size_t c = 0; c < width; ++c) {
+    if (known[c] != kUnknownColumn) continue;
+    needed[c] = 1;
+    needed[c + 1] = 1;
+  }
   std::size_t probes = 0;
   for (std::size_t g = 0; g < groups.groupCount(); ++g) {
     const std::size_t n = groups.groupSize(g);
@@ -77,6 +96,7 @@ AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibl
     std::size_t atStart = 0;
     std::size_t atEnd = 0;
     for (std::size_t k = 0; k <= width; ++k) {
+      if (needed[k] == 0) continue;
       const double column = static_cast<double>(k);
       atStart = reader.firstBeginNotBefore(
         g, atStart, [&](std::uint64_t begin) { return quotient(begin, first, spp) < column; }, probes);
@@ -93,15 +113,18 @@ AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibl
       ended[k] += atEnd;
     }
   }
-
-  const auto touching = [&](std::size_t c) { return static_cast<std::ptrdiff_t>(started[c + 1] - ended[c]); };
-  const auto beginning = [&](std::size_t c) {
-    return c == 0 ? touching(0) : static_cast<std::ptrdiff_t>(started[c + 1] - started[c]);
+  const auto difference = [](std::size_t a, std::size_t b) {
+    return static_cast<std::ptrdiff_t>(a) - static_cast<std::ptrdiff_t>(b);
   };
-  const auto finishing = [&](std::size_t c) {
-    return c + 1 == width ? touching(c) : static_cast<std::ptrdiff_t>(ended[c + 1] - ended[c]);
+  const auto touching = [&](std::size_t c) -> std::ptrdiff_t {
+    return known[c] != kUnknownColumn ? known[c] : difference(started[c + 1], ended[c]);
   };
-
+  const auto beginning = [&](std::size_t c) -> std::ptrdiff_t {
+    return c == 0 ? touching(0) : difference(started[c + 1], started[c]);
+  };
+  const auto finishing = [&](std::size_t c) -> std::ptrdiff_t {
+    return c + 1 == width ? touching(c) : difference(ended[c + 1], ended[c]);
+  };
   std::size_t c = 0;
   while (c < width) {
     const std::ptrdiff_t here = touching(c);
@@ -121,13 +144,43 @@ AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibl
     const bool whole = beginning(runFirst) > 0 && finishing(runLast) > 0;
     if (whole && (runLast - runFirst + 1) >= minTextColumns) {
       if (const auto which = firstEndingPast(reader, static_cast<double>(runFirst), first, spp)) {
-        out.textMarks.push_back(LaneTextMark{*which, static_cast<std::uint32_t>(runFirst),
-                                             static_cast<std::uint32_t>(runLast)});
+        out.textMarks.push_back(
+          LaneTextMark{*which, static_cast<std::uint32_t>(runFirst), static_cast<std::uint32_t>(runLast)});
         continue;
       }
     }
     for (std::size_t x = runFirst; x <= runLast; ++x) out.tickColumns.push_back(static_cast<std::uint32_t>(x));
   }
+  return out;
+}
+
+}
+
+bool laneNeedsSummary(std::size_t annotationsInView, std::uint32_t widthPixels) {
+  return annotationsInView > kLaneSummaryAnnotationsPerColumn * static_cast<std::size_t>(widthPixels);
+}
+
+AnnotationLaneSummary summarizeLane(const AnnotationGroups& groups, double firstVisibleSample, double samplesPerPixel,
+                                    std::uint32_t widthPixels, std::uint32_t minTextColumns) {
+  AnnotationReader reader(groups);
+  return summarizeLane(reader, firstVisibleSample, samplesPerPixel, widthPixels, minTextColumns);
+}
+
+AnnotationLaneSummary summarizeLane(AnnotationReader& reader, double firstVisibleSample, double samplesPerPixel,
+                                    std::uint32_t widthPixels, std::uint32_t minTextColumns) {
+  const LaneCoverage coverage(reader.groups(), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeLane(reader, coverage, firstVisibleSample, samplesPerPixel, widthPixels, minTextColumns);
+}
+
+AnnotationLaneSummary summarizeLane(AnnotationReader& reader, const LaneCoverage& coverage, double firstVisibleSample,
+                                    double samplesPerPixel, std::uint32_t widthPixels, std::uint32_t minTextColumns) {
+  const AnnotationGroups& groups = reader.groups();
+  if (!groups.usable() || widthPixels == 0 || samplesPerPixel <= 0.0 || groups.size() == 0) return {};
+  std::size_t decided = 0;
+  std::vector<std::int8_t> known = knownColumns(groups, coverage, widthPixels, decided);
+  AnnotationLaneSummary out = summarizeColumns(reader, std::move(known), firstVisibleSample, samplesPerPixel,
+                                               widthPixels, minTextColumns);
+  out.decided = decided;
   return out;
 }
 

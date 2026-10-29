@@ -16,12 +16,15 @@
 #include <variant>
 #include <vector>
 
+#include <capnp/message.h>
+
 #include "decode_ring_reader.h"
 #include "decode_input.h"
 #include "decode_job.h"
 #include "declared_decoder.h"
 #include "decoder.h"
 #include "frame_output.h"
+#include "ipc_decoder_build.h"
 
 namespace bitoscope::plugin_c_sdk {
 
@@ -190,6 +193,12 @@ ipc::FacetReply DecoderRuntime::start(uint64_t id, const dec::DecodeStart& s) {
   if (!job) return ipc::FacetReply{false, std::move(job.error()), {}};
   Job& j = **job;
   PreparedJob& prepared = *j.setup;
+  if (prepared.totalIsBound && (prepared.channels.empty() || !s.setup.inputs.empty())) {
+    return ipc::FacetReply{false,
+                           "job " + std::to_string(id) + " of decoder '" + s.setup.decoder + "' " +
+                               std::string(decode::kStreamsNeedFinalLength),
+                           {}};
+  }
   if (!s.setup.outputs.empty() && s.setup.facts.totalSamples == 0) {
     ipc::FacetReply refused;
     refused.message = "job " + std::to_string(id) + " wants items from output '" + s.setup.outputs.front() +
@@ -232,6 +241,7 @@ ipc::FacetReply DecoderRuntime::start(uint64_t id, const dec::DecodeStart& s) {
   }
   j.input = bitoscope_decode_input::fromRing(std::move(*reader));
   j.input->setProgressStep(s.setup.progressStep);
+  if (prepared.totalIsBound) j.input->setBound(prepared.totalSamples);
   if (readsItems) {
     std::vector<ItemInputSpec> specs;
     for (const JobInput& i : prepared.declaredInputs) specs.push_back({i.name, i.bound});
@@ -331,22 +341,17 @@ void DecoderRuntime::run(Job& runtimeJob) {
                                                         -> std::expected<void, std::string> {
     const std::span<const std::vector<uint8_t>> values = std::exchange(table, {});
     if (auto why = check.refusal(batch, values.size())) return std::unexpected(std::move(*why));
+    const bool anyBytes = check.anyBytes();
     size_t at = 0;
     do {
-      const size_t n = (std::min)(kAnnotationBatch, batch.size() - at);
-      dec::AnnotationBatch event;
+      const auto chunk = batch.subspan(at, (std::min)(kAnnotationBatch, batch.size() - at));
+      at += chunk.size();
       dec::ByteValues chunkValues;
-      event.annotations.reserve(n);
-      for (size_t i = at; i < at + n; ++i) {
-        const bitoscope_annotation& a = batch[i];
-        uint64_t value = a.value;
-        if (check.anyBytes() && check.showsBytes(a.cls)) {
-          value = chunkValues.values.size();
-          chunkValues.values.push_back(values[a.value]);
+      if (anyBytes) {
+        for (const bitoscope_annotation& a : chunk) {
+          if (check.showsBytes(a.cls)) chunkValues.values.push_back(values[a.value]);
         }
-        event.annotations.push_back({a.begin, a.end, a.row, a.cls, value});
       }
-      at += n;
       if (!chunkValues.values.empty()) {
         auto values_payload = dec::encodeEvent(dec::DecoderEvent{job.id, std::move(chunkValues), 0});
         if (!values_payload) return std::unexpected("byte values could not be encoded: " + values_payload.error());
@@ -354,12 +359,18 @@ void DecoderRuntime::run(Job& runtimeJob) {
           return std::unexpected("byte values could not be sent to host: " + s.error());
         }
       }
-      auto payload = dec::encodeEvent(dec::DecoderEvent{job.id, std::move(event), at == batch.size() ? settled : 0});
-      if (!payload) return std::unexpected("annotations could not be encoded: " + payload.error());
-      if (auto s = sendFacetEvent(std::string(dec::kFacetName), std::move(*payload)); !s) {
+      const uint64_t mark = at == batch.size() ? settled : 0;
+      uint64_t nextValue = 0;
+      const auto valueOf = [&](const bitoscope_annotation& a) {
+        return anyBytes && check.showsBytes(a.cls) ? nextValue++ : a.value;
+      };
+      if (auto s = sendFacetEvent(dec::kFacetName, [&](capnp::MessageBuilder& message) {
+            dec::buildAnnotationEvent(message, job.id, mark, chunk, valueOf);
+          });
+          !s) {
         return std::unexpected("annotations could not be sent to host: " + s.error());
       }
-      sent += n;
+      sent += chunk.size();
     } while (at < batch.size());
     return {};
   });
@@ -372,21 +383,16 @@ void DecoderRuntime::run(Job& runtimeJob) {
   uint64_t itemsSent = 0;
   const auto sendItems = [&](uint32_t output, std::span<const bitoscope_stream_item> batch)
       -> std::expected<void, std::string> {
+    const std::string& name = job.declaredOutputs[output].name;
     for (size_t at = 0; at < batch.size(); at += kItemBatch) {
-      const size_t n = (std::min)(kItemBatch, batch.size() - at);
-      dec::ItemBatch event;
-      event.output = job.declaredOutputs[output].name;
-      event.items.reserve(n);
-      for (size_t i = at; i < at + n; ++i) {
-        const bitoscope_stream_item& item = batch[i];
-        event.items.push_back({item.begin, item.end, item.value, item.kind, item.flags});
-      }
-      auto payload = dec::encodeEvent(dec::DecoderEvent{job.id, std::move(event)});
-      if (!payload) return std::unexpected("stream items could not be encoded: " + payload.error());
-      if (auto s = sendFacetEvent(std::string(dec::kFacetName), std::move(*payload)); !s) {
+      const auto chunk = batch.subspan(at, (std::min)(kItemBatch, batch.size() - at));
+      if (auto s = sendFacetEvent(dec::kFacetName, [&](capnp::MessageBuilder& message) {
+            dec::buildItemEvent(message, job.id, 0, name, chunk);
+          });
+          !s) {
         return std::unexpected("stream items could not be sent to host: " + s.error());
       }
-      itemsSent += n;
+      itemsSent += chunk.size();
     }
     return {};
   };

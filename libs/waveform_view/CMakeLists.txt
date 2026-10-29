@@ -9,6 +9,7 @@ add_library(bitoscope_waveform_view STATIC
     pulse_measurement.cpp
     time_ruler.cpp
     interaction.cpp
+    pointer_grab.cpp
     channel_colors.cpp
     color_choice.cpp
     signal_style.cpp
@@ -32,6 +33,8 @@ add_library(bitoscope_waveform_view STATIC
     annotation_memory.cpp
     annotation_lane_index.cpp
     annotation_row_summary.cpp
+    coverage_pyramid.cpp
+    lane_coverage.cpp
     pass_uploads.cpp
     annotation_colors.cpp
     annotation_shape.cpp

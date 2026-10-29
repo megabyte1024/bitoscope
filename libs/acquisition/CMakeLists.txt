@@ -39,6 +39,7 @@ find_package(Threads REQUIRED)
 
 add_library(bitoscope_acquisition STATIC
     acquisition.cpp
+    capture_planning.cpp
     ring_pump.cpp
     thread_name.cpp
 )
@@ -54,7 +55,7 @@ target_link_libraries(bitoscope_acquisition PUBLIC
     bitoscope_acquisition_host_ring
     bitoscope_acquisition_facets
     bitoscope_capture
-    bitoscope_pack_pool
+    bitoscope_capture_session
     Threads::Threads
 )
 target_link_libraries(bitoscope_acquisition PRIVATE bitoscope_display_text bitoscope_heap_trim)

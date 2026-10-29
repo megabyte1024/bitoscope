@@ -34,6 +34,8 @@ struct DenseSpan {
   bool levelAfter = false;
 
   double samplesPerColumn = 1.0;
+  bool openBefore = false;
+  bool openAfter = false;
 
   bool operator==(const DenseSpan&) const = default;
 };
@@ -46,6 +48,8 @@ struct DenseProbe {
   bool levelBefore = false;
   bool levelAfter = false;
   bool levelsKnown = false;
+  bool openBefore = false;
+  bool openAfter = false;
 
   bool operator==(const DenseProbe&) const = default;
 };

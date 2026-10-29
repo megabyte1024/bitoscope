@@ -83,6 +83,9 @@ RowSummary summarizeLaneRow(const AnnotationGroups& groups, const DerivedRows& d
 RowSummary summarizeLaneRow(AnnotationReader& reader, const DerivedRows& derived, std::uint32_t row,
                             const DecoderVisibility& visibility, double firstVisibleSample, double samplesPerPixel,
                             std::uint32_t widthPixels);
+RowSummary summarizeLaneRow(AnnotationReader& reader, const LaneCoverage& coverage, const DerivedRows& derived,
+                            std::uint32_t row, const DecoderVisibility& visibility, double firstVisibleSample,
+                            double samplesPerPixel, std::uint32_t widthPixels);
 
 std::optional<decode::Annotation> laneRowAnnotationAt(const AnnotationGroups& groups, const DerivedRows& derived,
                                                       std::uint32_t row, const DecoderVisibility& visibility,

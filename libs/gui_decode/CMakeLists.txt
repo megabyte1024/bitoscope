@@ -64,10 +64,14 @@ add_library(bitoscope_gui_decode STATIC
     lane_text_source.cpp
     lane_picture_cache.cpp
     lane_derivation.h
+    live_run_capture.cpp
+    live_run_capture.h
     option_text_buffers.cpp
     option_text_buffers.h
     option_widget.cpp
     option_widget.h
+    panel_decodes.cpp
+    panel_decodes.h
     row_data_format.cpp
     row_data_format.h
     signal_view_source.h

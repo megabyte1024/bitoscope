@@ -8,6 +8,7 @@
 #include <optional>
 #include <expected>
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <memory>
 #include <new>
@@ -20,17 +21,22 @@
 
 #include "bitoscope_decoder.h"
 #include "bitoscope_decoder_cpp.h"
+#include "bitoscope_decoder_layers.h"
 #include "bitoscope_decoder_testing.h"
 #include "decode_input.h"
 
 namespace detail = bitoscope::plugin::detail;
+namespace plugin = bitoscope::plugin;
 
 namespace {
+
+constexpr size_t kMaxWalked = 32;
 
 int noneOrError(const bitoscope_decode_input* in) { return in->failed() ? BITOSCOPE_ERROR : BITOSCOPE_NONE; }
 
 struct SpanGetter {
   bitoscope_decode_input* in;
+  void noteWords(uint64_t words) const { in->noteScanned(words); }
   bool operator()(uint64_t sample, bitoscope_span& out) const {
     const bitoscope_span* s = in->spanAt(sample);
     if (s == nullptr) return false;
@@ -115,16 +121,29 @@ std::unique_ptr<bitoscope::plugin_c_sdk::ItemSource> bitoscope::plugin_c_sdk::me
 
 extern "C" {
 
+void bitoscope_test_count_scans(bitoscope_decode_input* in, uint64_t* counter) {
+  if (in != nullptr) in->countScans(counter);
+}
+
+uint64_t* bitoscope_test_scan_counter(const bitoscope_decode_input* in) {
+  return in == nullptr ? nullptr : in->scanCounter();
+}
+
 uint32_t bitoscope_input_channels(const bitoscope_decode_input* in) { return in == nullptr ? 0 : in->channels(); }
 
-int bitoscope_level(bitoscope_decode_input* in, uint32_t channel, uint64_t sample) {
+int bitoscope_level(bitoscope_decode_input* in, uint32_t channel, uint64_t sample, int* level) {
   if (in == nullptr) return BITOSCOPE_ERROR;
   try {
     in->tick();
+    if (level == nullptr) {
+      in->fail("bitoscope_level: no place given for level");
+      return BITOSCOPE_ERROR;
+    }
     if (!in->checkChannel(channel)) return BITOSCOPE_ERROR;
     const bitoscope_span* s = in->spanAt(sample);
     if (s == nullptr) return noneOrError(in);
-    return detail::spanLevel(*s, channel, sample - s->first_sample) ? 1 : 0;
+    *level = detail::spanLevel(*s, channel, sample - s->first_sample) ? 1 : 0;
+    return BITOSCOPE_OK;
   } catch (...) {
     return thrown(in);
   }
@@ -180,6 +199,51 @@ int bitoscope_next_change2_limit(bitoscope_decode_input* in, uint32_t channel_a,
     SpanGetter get{in};
     const int r = detail::nextChange2Across(get, channel_a, channel_b, from, limit, at, which);
     return r == BITOSCOPE_OK ? r : noneOrError(in);
+  } catch (...) {
+    return thrown(in);
+  }
+}
+
+int bitoscope_for_each_change(bitoscope_decode_input* in, const bitoscope_watched_line* watched, size_t num_watched,
+                              const uint32_t* sampled, size_t num_sampled, bitoscope_change_fn on_change, void* user) {
+  if (in == nullptr) return BITOSCOPE_ERROR;
+  try {
+    in->tick();
+    constexpr const char* name = "bitoscope_for_each_change";
+    if (num_watched < 1 || num_watched > kMaxWalked || num_sampled > kMaxWalked) {
+      in->fail(std::string(name) + ": " + std::to_string(num_watched) + " lines watched and " +
+               std::to_string(num_sampled) + " sampled; 1 to 32 watched and at most 32 sampled are walked");
+      return BITOSCOPE_ERROR;
+    }
+    if (watched == nullptr || (num_sampled != 0 && sampled == nullptr) || on_change == nullptr) {
+      in->fail(std::string(name) + ": no lines, sampled channels or callback were given");
+      return BITOSCOPE_ERROR;
+    }
+    std::array<plugin::WatchedLine, kMaxWalked> lines{};
+    std::array<uint32_t, kMaxWalked> data{};
+    for (size_t i = 0; i < num_watched; ++i) {
+      if (!validKind(in, watched[i].edge, name)) return BITOSCOPE_ERROR;
+      lines[i] = {watched[i].channel, static_cast<plugin::Edge>(watched[i].edge)};
+    }
+    std::copy_n(sampled, num_sampled, data.begin());
+    int stopped = BITOSCOPE_OK;
+    detail::CApiWalk env{in};
+    const auto end = detail::walkChanges<kMaxWalked, kMaxWalked, true>(
+        env, lines, num_watched, data, num_sampled, 0, 0, [](uint32_t) { return true; },
+        [&](const plugin::LineChange<kMaxWalked, kMaxWalked>& c) {
+          bitoscope_line_change change{c.at(), 0, 0, 0, 0};
+          for (size_t i = 0; i < num_watched; ++i) {
+            change.changed |= (c.changed(i) ? 1u : 0u) << i;
+            change.before |= (c.before(i) ? 1u : 0u) << i;
+            change.after |= (c.after(i) ? 1u : 0u) << i;
+          }
+          for (size_t m = 0; m < num_sampled; ++m) change.sampled |= (c.sampled(m) ? 1u : 0u) << m;
+          stopped = on_change(user, &change);
+          return stopped == BITOSCOPE_OK;
+        });
+    (void)end;
+    if (stopped != BITOSCOPE_OK) return stopped;
+    return in->failed() ? BITOSCOPE_ERROR : BITOSCOPE_OK;
   } catch (...) {
     return thrown(in);
   }
@@ -313,6 +377,20 @@ int bitoscope_span_at(bitoscope_decode_input* in, uint64_t sample, bitoscope_spa
     return BITOSCOPE_OK;
   } catch (...) {
     return thrown(in);
+  }
+}
+
+bitoscope_emit_cursor* bitoscope_emit_room(bitoscope_annotations* out) {
+  static bitoscope_emit_cursor none{};
+  return out == nullptr ? &none : out->room();
+}
+
+int bitoscope_emit_commit(bitoscope_annotations* out) {
+  if (out == nullptr) return BITOSCOPE_ERROR;
+  try {
+    return out->commitRoom();
+  } catch (...) {
+    return thrown(out->input());
   }
 }
 

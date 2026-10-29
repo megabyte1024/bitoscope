@@ -44,6 +44,7 @@ struct PreparedJob {
   std::vector<bitoscope_job_input> inputs;
   bitoscope_decode_job c{};
   uint64_t totalSamples = 0;
+  bool totalIsBound = false;
   uint64_t lookAhead = 0;
 
   PreparedJob(uint64_t jobId, const DecoderRegistration& registration, const ipc::decoder::JobSetup& setup,

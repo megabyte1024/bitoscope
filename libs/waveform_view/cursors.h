@@ -27,4 +27,6 @@ class CursorPair {
   uint64_t second_;
 };
 
+std::optional<CursorPair> cursorsAfterTrim(const CursorPair& cursors, uint64_t first, uint64_t count);
+
 }

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "view_table.h"
 #include "vulkan_pass_host.h"
 #include "waveform_renderer.h"
 
@@ -42,10 +43,7 @@ class VulkanWaveformRenderer final : public WaveformRenderer {
     std::uint64_t generation = 0;
   };
   struct View {
-    std::uint32_t width = 0;
-    std::uint32_t rows = 0;
     std::vector<std::uint8_t> levels;
-    std::uint64_t generation = 0;
     std::array<SlotBuffer, VulkanPassHost::kFramesInFlight> slots{};
     float left = 0;
     float lineWidth = 1;
@@ -60,9 +58,8 @@ class VulkanWaveformRenderer final : public WaveformRenderer {
   static void callback(const ImDrawList* list, const ImDrawCmd* cmd);
   void render(const Payload& payload, const ImDrawCmd* cmd);
   bool ensurePipeline();
-  bool syncSlot(View& view, std::uint32_t slot);
+  bool syncSlot(View& view, const gui_waveform_frame::ViewShape& shape, std::uint32_t slot);
   void releaseSlots(View& view);
-  void problem(std::string line);
 
   VulkanPassHost& vulkan_;
   bool pipelineTried_ = false;
@@ -70,8 +67,8 @@ class VulkanWaveformRenderer final : public WaveformRenderer {
   VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
   VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
   VkPipeline pipeline_ = VK_NULL_HANDLE;
+  gui_waveform_frame::WaveformViewTable table_;
   std::map<std::uint64_t, View> views_;
-  std::vector<std::string> problems_;
 };
 
 }

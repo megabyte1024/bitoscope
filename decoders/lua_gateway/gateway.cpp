@@ -23,6 +23,8 @@ extern "C" {
 }
 
 #include "binding.h"
+#include "bitoscope_decoder_cpp.h"
+#include "c_declaration.h"
 #include "decoder_plugin.h"
 #include "plugin_version.h"
 #include "script_state.h"
@@ -33,93 +35,16 @@ namespace {
 
 constexpr const char* kGatewayVersion = "0.1.0";
 
-struct ChannelDecl {
-  std::string name;
-  std::string description;
-  bool required = false;
-  std::string display;
-};
-struct OptionDecl {
-  std::string name;
-  std::string description;
-  std::string display;
-  bool integer = false;
-  std::string default_value;
-  std::vector<std::string> values;
-  std::vector<std::string> unsupported_values;
-  bool has_min = false;
-  bool has_max = false;
-  int64_t min = 0;
-  int64_t max = 0;
-};
-struct ClassDecl {
-  uint32_t id = 0;
-  std::string name;
-  int format = BITOSCOPE_VALUE_NONE;
-  uint32_t digits = 0;
-  std::optional<std::string> digits_option;
-  int role = BITOSCOPE_ROLE_NONE;
-};
-struct RowDecl {
-  uint32_t id = 0;
-  std::string name;
-};
-struct RowSourceDecl {
-  uint32_t row = 0;
-  uint32_t cls = 0;
-  uint32_t source_row = 0;
-  std::vector<uint32_t> source_classes;
-  std::string enable;
-  int rule = 0;
-  std::string rate_option;
-  uint32_t offset_bits = 0;
-  std::string count_option;
-  std::string order_option;
-  std::string clock;
-  std::string data;
-  uint32_t count = 0;
-};
-struct OutputDecl {
-  std::string name;
-  std::string description;
-  int type = 0;
-  uint32_t width = 0;
-  std::string width_option;
-  std::string channel;
-  std::string display;
-  std::optional<std::string> carries;
-  std::optional<std::string> carries_input;
-};
-struct InputDecl {
-  std::string name;
-  std::string description;
-  int type = 0;
-  uint32_t width = 0;
-  bool required = false;
-  std::string display;
-};
-struct AbbreviationDecl {
+struct Abbreviation {
   std::string upper;
   std::string shown;
-  bool also_word = false;
+  bool alsoWord = false;
 };
 struct Declaration {
-  std::string name;
-  std::string display;
-  std::vector<AbbreviationDecl> abbreviations;
-  std::optional<std::string> version;
-  std::vector<ChannelDecl> channels;
-  std::vector<OptionDecl> options;
-  std::vector<std::string> unsupported_options;
-  std::vector<std::string> protocols;
-  std::vector<ClassDecl> classes;
-  std::vector<RowDecl> rows;
-  std::vector<RowSourceDecl> row_sources;
-  std::vector<OutputDecl> outputs;
-  std::vector<InputDecl> inputs;
-  bool allows_shared_channels = false;
-  bool has_check = false;
-  bool has_look_ahead = false;
+  plugin::DecoderDeclaration decoder;
+  std::vector<Abbreviation> abbreviations;
+  bool hasCheck = false;
+  bool hasLookAhead = false;
 };
 
 }
@@ -147,18 +72,6 @@ std::string stringField(lua_State* L, int index, const char* key) {
   size_t size = 0;
   const char* s = lua_type(L, -1) == LUA_TSTRING ? lua_tolstring(L, -1, &size) : nullptr;
   std::string out = s != nullptr ? std::string(s, size) : std::string();
-  lua_pop(L, 1);
-  return out;
-}
-
-std::optional<std::string> optionalString(lua_State* L, int index, const char* key) {
-  rawField(L, index, key);
-  std::optional<std::string> out;
-  if (lua_type(L, -1) == LUA_TSTRING) {
-    size_t size = 0;
-    const char* s = lua_tolstring(L, -1, &size);
-    out = std::string(s, size);
-  }
   lua_pop(L, 1);
   return out;
 }
@@ -206,188 +119,94 @@ std::vector<std::string> stringList(lua_State* L, int index, const char* key) {
 }
 
 Declaration readDeclaration(lua_State* L, int index) {
-  Declaration d;
+  Declaration out;
+  plugin::DecoderDeclaration& d = out.decoder;
   d.name = stringField(L, index, "name");
   d.display = stringField(L, index, "display");
   eachOf(L, index, "abbreviations", [&](lua_State* S) {
-    d.abbreviations.push_back({stringField(S, -1, "upper"), stringField(S, -1, "shown"),
-                               boolField(S, -1, "also_word")});
+    out.abbreviations.push_back({stringField(S, -1, "upper"), stringField(S, -1, "shown"),
+                                 boolField(S, -1, "also_word")});
   });
-  d.version = optionalString(L, index, "version");
+  d.version = stringField(L, index, "version");
   eachOf(L, index, "channels", [&](lua_State* S) {
-    d.channels.push_back({stringField(S, -1, "name"), stringField(S, -1, "description"), boolField(S, -1, "required"),
-                          stringField(S, -1, "display")});
+    d.channels.push_back({.name = stringField(S, -1, "name"),
+                          .description = stringField(S, -1, "description"),
+                          .optional = boolField(S, -1, "optional"),
+                          .display = stringField(S, -1, "display")});
   });
   eachOf(L, index, "options", [&](lua_State* S) {
-    OptionDecl o;
-    o.name = stringField(S, -1, "name");
-    o.description = stringField(S, -1, "description");
-    o.display = stringField(S, -1, "display");
-    o.integer = stringField(S, -1, "type") == "integer";
-    o.default_value = stringField(S, -1, "default");
-    o.values = stringList(S, -1, "values");
-    o.unsupported_values = stringList(S, -1, "unsupported_values");
-    if (auto v = numberField(S, -1, "min")) {
-      o.has_min = true;
-      o.min = *v;
-    }
-    if (auto v = numberField(S, -1, "max")) {
-      o.has_max = true;
-      o.max = *v;
-    }
-    d.options.push_back(std::move(o));
+    d.options.push_back({.name = stringField(S, -1, "name"),
+                         .description = stringField(S, -1, "description"),
+                         .type = stringField(S, -1, "type") == "integer" ? plugin::OptionType::integer
+                                                                       : plugin::OptionType::string,
+                         .defaultValue = stringField(S, -1, "default_value"),
+                         .allowedValues = stringList(S, -1, "allowed_values"),
+                         .min = numberField(S, -1, "min"),
+                         .max = numberField(S, -1, "max"),
+                         .unsupportedValues = stringList(S, -1, "unsupported_values"),
+                         .display = stringField(S, -1, "display")});
   });
-  d.unsupported_options = stringList(L, index, "unsupported_options");
+  d.unsupportedOptions = stringList(L, index, "unsupported_options");
   d.protocols = stringList(L, index, "protocols");
   eachOf(L, index, "classes", [&](lua_State* S) {
-    ClassDecl c;
-    c.id = static_cast<uint32_t>(numberField(S, -1, "id").value_or(0));
-    c.name = stringField(S, -1, "name");
-    c.format = static_cast<int>(numberField(S, -1, "format").value_or(BITOSCOPE_VALUE_NONE));
-    c.digits = static_cast<uint32_t>(numberField(S, -1, "digits").value_or(0));
-    c.digits_option = optionalString(S, -1, "digits_option");
-    c.role = static_cast<int>(numberField(S, -1, "role").value_or(BITOSCOPE_ROLE_NONE));
-    d.classes.push_back(std::move(c));
+    d.classes.push_back(
+        {.id = static_cast<uint32_t>(numberField(S, -1, "id").value_or(0)),
+         .name = stringField(S, -1, "name"),
+         .format = static_cast<plugin::ValueFormat>(numberField(S, -1, "format").value_or(BITOSCOPE_VALUE_NONE)),
+         .hexDigits = static_cast<uint32_t>(numberField(S, -1, "hex_digits").value_or(0)),
+         .hexDigitsOption = stringField(S, -1, "hex_digits_option"),
+         .role = static_cast<plugin::AnnotationRole>(numberField(S, -1, "role").value_or(BITOSCOPE_ROLE_NONE))});
   });
   eachOf(L, index, "rows", [&](lua_State* S) {
     d.rows.push_back({static_cast<uint32_t>(numberField(S, -1, "id").value_or(0)), stringField(S, -1, "name")});
   });
   eachOf(L, index, "row_sources", [&](lua_State* S) {
-    RowSourceDecl s;
+    plugin::RowSource s;
     s.row = static_cast<uint32_t>(numberField(S, -1, "row").value_or(0));
     s.cls = static_cast<uint32_t>(numberField(S, -1, "cls").value_or(0));
-    s.source_row = static_cast<uint32_t>(numberField(S, -1, "source_row").value_or(0));
+    s.sourceRow = static_cast<uint32_t>(numberField(S, -1, "source_row").value_or(0));
     eachOf(S, -1, "source_classes",
-           [&](lua_State* T) { s.source_classes.push_back(static_cast<uint32_t>(lua_tonumber(T, -1))); });
-    s.enable = stringField(S, -1, "enable");
-    s.rule = static_cast<int>(numberField(S, -1, "rule").value_or(0));
-    s.rate_option = stringField(S, -1, "rate_option");
-    s.offset_bits = static_cast<uint32_t>(numberField(S, -1, "offset_bits").value_or(0));
-    s.count_option = stringField(S, -1, "count_option");
-    s.order_option = stringField(S, -1, "order_option");
-    s.clock = stringField(S, -1, "clock");
-    s.data = stringField(S, -1, "data");
-    s.count = static_cast<uint32_t>(numberField(S, -1, "count").value_or(0));
-    d.row_sources.push_back(std::move(s));
+           [&](lua_State* T) { s.sourceClasses.push_back(static_cast<uint32_t>(lua_tonumber(T, -1))); });
+    s.enableOption = stringField(S, -1, "enable_option");
+    s.rule = static_cast<plugin::RowRule>(numberField(S, -1, "rule").value_or(0));
+    rawField(S, -1, "grid");
+    s.grid = {stringField(S, -1, "rate_option"), static_cast<uint32_t>(numberField(S, -1, "offset_bits").value_or(0)),
+              stringField(S, -1, "count_option"), stringField(S, -1, "order_option")};
+    lua_pop(S, 1);
+    rawField(S, -1, "edges");
+    s.edges = {stringField(S, -1, "clock_channel"), stringField(S, -1, "data_channel"),
+               stringField(S, -1, "count_option"), static_cast<uint32_t>(numberField(S, -1, "count").value_or(0))};
+    lua_pop(S, 1);
+    d.rowSources.push_back(std::move(s));
   });
   eachOf(L, index, "outputs", [&](lua_State* S) {
-    d.outputs.push_back({stringField(S, -1, "name"), stringField(S, -1, "description"),
-                         static_cast<int>(numberField(S, -1, "type").value_or(0)),
-                         static_cast<uint32_t>(numberField(S, -1, "width").value_or(0)),
-                         stringField(S, -1, "width_option"), stringField(S, -1, "channel"),
-                         stringField(S, -1, "display"), optionalString(S, -1, "carries"),
-                         optionalString(S, -1, "carries_input")});
+    d.outputs.push_back({.name = stringField(S, -1, "name"),
+                         .description = stringField(S, -1, "description"),
+                         .type = static_cast<plugin::StreamType>(numberField(S, -1, "type").value_or(0)),
+                         .width = static_cast<uint32_t>(numberField(S, -1, "width").value_or(0)),
+                         .widthOption = stringField(S, -1, "width_option"),
+                         .requiresChannel = stringField(S, -1, "requires_channel"),
+                         .display = stringField(S, -1, "display"),
+                         .carries = stringField(S, -1, "carries"),
+                         .carriesInput = stringField(S, -1, "carries_input")});
   });
   eachOf(L, index, "inputs", [&](lua_State* S) {
-    d.inputs.push_back({stringField(S, -1, "name"), stringField(S, -1, "description"),
-                        static_cast<int>(numberField(S, -1, "type").value_or(0)),
-                        static_cast<uint32_t>(numberField(S, -1, "width").value_or(0)), boolField(S, -1, "required"),
-                        stringField(S, -1, "display")});
+    d.inputs.push_back({.name = stringField(S, -1, "name"),
+                        .description = stringField(S, -1, "description"),
+                        .type = static_cast<plugin::StreamType>(numberField(S, -1, "type").value_or(0)),
+                        .width = static_cast<uint32_t>(numberField(S, -1, "width").value_or(0)),
+                        .optional = boolField(S, -1, "optional"),
+                        .display = stringField(S, -1, "display")});
   });
-  d.allows_shared_channels = boolField(L, index, "allows_shared_channels");
-  rawField(L, index, "check_capture");
-  d.has_check = lua_type(L, -1) == LUA_TFUNCTION;
+  d.allowsSharedChannels = boolField(L, index, "allows_shared_channels");
+  rawField(L, index, "check");
+  out.hasCheck = lua_type(L, -1) == LUA_TFUNCTION;
   lua_pop(L, 1);
-  rawField(L, index, "look_ahead");
-  d.has_look_ahead = lua_type(L, -1) == LUA_TFUNCTION;
+  rawField(L, index, "look_ahead_samples");
+  out.hasLookAhead = lua_type(L, -1) == LUA_TFUNCTION;
   lua_pop(L, 1);
-  return d;
+  return out;
 }
-
-class SdkDecoder {
- public:
-  SdkDecoder(const Declaration& d, const char* version, bitoscope_decode_fn decode, bitoscope_check_fn check,
-             void* user) {
-    for (const auto& c : d.channels) {
-      channels_.push_back({c.name.c_str(), c.description.c_str(), c.required ? 1 : 0, c.display.c_str()});
-    }
-    texts_.reserve(d.options.size() * 2);
-    for (const auto& o : d.options) {
-      auto& values = texts_.emplace_back();
-      for (const auto& v : o.values) values.push_back(v.c_str());
-      auto& unsupported = texts_.emplace_back();
-      for (const auto& v : o.unsupported_values) unsupported.push_back(v.c_str());
-      bitoscope_decoder_option option{};
-      option.name = o.name.c_str();
-      option.description = o.description.c_str();
-      option.type = o.integer ? BITOSCOPE_OPTION_INTEGER : BITOSCOPE_OPTION_STRING;
-      option.default_value = o.default_value.c_str();
-      option.allowed_values = values.data();
-      option.num_allowed_values = values.size();
-      option.has_minimum = o.has_min ? 1 : 0;
-      option.minimum = o.min;
-      option.has_maximum = o.has_max ? 1 : 0;
-      option.maximum = o.max;
-      option.unsupported_values = unsupported.data();
-      option.num_unsupported_values = unsupported.size();
-      option.display = o.display.c_str();
-      options_.push_back(option);
-    }
-    for (const auto& u : d.unsupported_options) unsupported_options_.push_back(u.c_str());
-    for (const auto& u : d.protocols) protocols_.push_back(u.c_str());
-    for (const auto& c : d.classes) {
-      classes_.push_back({c.id, c.name.c_str(), c.format, c.digits, c.digits_option ? c.digits_option->c_str() : nullptr,
-                          c.role});
-    }
-    for (const auto& r : d.rows) rows_.push_back({r.id, r.name.c_str()});
-    for (const auto& s : d.row_sources) {
-      row_sources_.push_back({s.row, s.cls, s.source_row, s.source_classes.data(), s.source_classes.size(),
-                              s.enable.c_str(), s.rule,
-                              {s.rate_option.c_str(), s.offset_bits, s.count_option.c_str(), s.order_option.c_str()},
-                              {s.clock.c_str(), s.data.c_str(), s.count_option.c_str(), s.count}});
-    }
-    for (const auto& o : d.outputs) {
-      outputs_.push_back({o.name.c_str(), o.description.c_str(), o.type, o.width, o.width_option.c_str(),
-                          o.channel.c_str(), o.display.c_str(), o.carries ? o.carries->c_str() : nullptr,
-                          o.carries_input ? o.carries_input->c_str() : nullptr});
-    }
-    for (const auto& i : d.inputs) {
-      inputs_.push_back({i.name.c_str(), i.description.c_str(), i.type, i.width, i.required ? 1 : 0, i.display.c_str()});
-    }
-    decoder_.name = d.name.c_str();
-    decoder_.decode = decode;
-    decoder_.channels = channels_.data();
-    decoder_.num_channels = channels_.size();
-    decoder_.classes = classes_.data();
-    decoder_.num_classes = classes_.size();
-    decoder_.rows = rows_.data();
-    decoder_.num_rows = rows_.size();
-    decoder_.version = version;
-    decoder_.options = options_.data();
-    decoder_.num_options = options_.size();
-    decoder_.unsupported_options = unsupported_options_.data();
-    decoder_.num_unsupported_options = unsupported_options_.size();
-    decoder_.allows_shared_channels = d.allows_shared_channels ? 1 : 0;
-    decoder_.check = check;
-    decoder_.user = user;
-    decoder_.outputs = outputs_.data();
-    decoder_.num_outputs = outputs_.size();
-    decoder_.inputs = inputs_.data();
-    decoder_.num_inputs = inputs_.size();
-    decoder_.display = d.display.c_str();
-    decoder_.protocols = protocols_.data();
-    decoder_.num_protocols = protocols_.size();
-    decoder_.row_sources = row_sources_.data();
-    decoder_.num_row_sources = row_sources_.size();
-  }
-  SdkDecoder(const SdkDecoder&) = delete;
-  SdkDecoder& operator=(const SdkDecoder&) = delete;
-
-  const bitoscope_decoder* decoder() const { return &decoder_; }
-
- private:
-  std::vector<bitoscope_decoder_channel> channels_;
-  std::vector<std::vector<const char*>> texts_;
-  std::vector<bitoscope_decoder_option> options_;
-  std::vector<const char*> unsupported_options_;
-  std::vector<const char*> protocols_;
-  std::vector<bitoscope_annotation_class> classes_;
-  std::vector<bitoscope_annotation_row> rows_;
-  std::vector<bitoscope_row_source> row_sources_;
-  std::vector<bitoscope_decoder_output> outputs_;
-  std::vector<bitoscope_decoder_input> inputs_;
-  bitoscope_decoder decoder_{};
-};
 
 int refusedDecode(void*, const bitoscope_decode_job*, bitoscope_decode_input*, bitoscope_annotations*) {
   return BITOSCOPE_ERROR;
@@ -400,15 +219,15 @@ void pushDeclaration(const ScriptState& state) {
   lua_remove(L, -2);
 }
 
-const OptionDecl* optionOf(const Declaration& d, const char* name) {
-  for (const OptionDecl& o : d.options) {
-    if (o.name == name) return &o;
+bool integerOption(const Declaration& d, const char* name) {
+  for (const plugin::DecoderOption& o : d.decoder.options) {
+    if (o.name == name) return o.type == plugin::OptionType::integer;
   }
-  return nullptr;
+  return false;
 }
 
 void pushFacts(lua_State* L, const bitoscope_decode_job* job, const Declaration& d) {
-  lua_createtable(L, 0, 6);
+  lua_createtable(L, 0, 7);
   lua_createtable(L, 0, static_cast<int>(job->num_channels));
   for (size_t i = 0; i < job->num_channels; ++i) {
     pushWhole(L, job->channels[i].input_channel);
@@ -418,10 +237,9 @@ void pushFacts(lua_State* L, const bitoscope_decode_job* job, const Declaration&
   lua_createtable(L, 0, static_cast<int>(job->num_options));
   for (size_t i = 0; i < job->num_options; ++i) {
     const bitoscope_job_option& o = job->options[i];
-    const OptionDecl* decl = optionOf(d, o.name);
     int64_t v = 0;
     const char* end = o.value + std::strlen(o.value);
-    if (decl != nullptr && decl->integer && std::from_chars(o.value, end, v).ec == std::errc()) {
+    if (integerOption(d, o.name) && std::from_chars(o.value, end, v).ec == std::errc()) {
       lua_pushnumber(L, static_cast<lua_Number>(v));
     } else {
       lua_pushstring(L, o.value);
@@ -435,6 +253,8 @@ void pushFacts(lua_State* L, const bitoscope_decode_job* job, const Declaration&
   lua_setfield(L, -2, "capture_channels");
   pushWhole(L, static_cast<int64_t>(job->total_samples));
   lua_setfield(L, -2, "total_samples");
+  lua_pushboolean(L, job->total_is_bound != 0);
+  lua_setfield(L, -2, "total_is_bound");
   lua_pushstring(L, job->decoder);
   lua_setfield(L, -2, "decoder");
 }
@@ -456,7 +276,7 @@ int callCheck(lua_State* L) {
   const auto* job = static_cast<const bitoscope_decode_job*>(lua_touserdata(L, 1));
   const auto* script = static_cast<const Gateway::Script*>(lua_touserdata(L, 2));
   pushDeclaration(script->state);
-  rawField(L, -1, "check_capture");
+  rawField(L, -1, "check");
   pushFacts(L, job, script->decl);
   lua_pushvalue(L, -2);
   lua_insert(L, -2);
@@ -466,7 +286,7 @@ int callCheck(lua_State* L) {
   lua_pushvalue(L, -2);
   pushWhere(L);
   return luaL_error(L,
-                    "%s check_capture returned %s; it returns nothing to accept job, or string saying why "
+                    "%s check returned %s; it returns nothing to accept job, or string saying why "
                     "not",
                     lua_tostring(L, -1), luaL_typename(L, -3));
 }
@@ -475,7 +295,7 @@ int callLookAhead(lua_State* L) {
   const auto* job = static_cast<const bitoscope_decode_job*>(lua_touserdata(L, 1));
   const auto* script = static_cast<const Gateway::Script*>(lua_touserdata(L, 2));
   pushDeclaration(script->state);
-  rawField(L, -1, "look_ahead");
+  rawField(L, -1, "look_ahead_samples");
   lua_pushvalue(L, 4);
   pushFacts(L, job, script->decl);
   lua_call(L, 1, 1);
@@ -504,7 +324,7 @@ int callLookAhead(lua_State* L) {
   lua_pushvalue(L, 4);
   pushWhere(L);
   return luaL_error(L,
-                    "%s look_ahead returned %s; it returns nothing, or whole number of samples from 0 to "
+                    "%s look_ahead_samples returned %s; it returns nothing, or whole number of samples from 0 to "
                     "2^53 - 1 (most it needs in its window at once)",
                     lua_tostring(L, -1), returned);
 }
@@ -560,25 +380,26 @@ std::string popMessage(lua_State* L) {
 
 std::optional<std::string> checkJob(const bitoscope_decode_job& job, const Declaration& d) {
   if (job.total_samples > kMaxLuaSamples) {
-    return "capture has " + std::to_string(job.total_samples) + " samples; Lua decoder takes at most " +
-           std::to_string(kMaxLuaSamples) + " (2^53 - 1), most Lua number holds exactly";
+    return (job.total_is_bound != 0 ? "capture may hold up to " : "capture has ") + std::to_string(job.total_samples) +
+           " samples; Lua decoder takes at most " + std::to_string(kMaxLuaSamples) +
+           " (2^53 - 1), most Lua number holds exactly";
   }
   if (job.sample_rate_milli_hz > kMaxLuaSamples) {
     return "sample rate of " + std::to_string(job.sample_rate_milli_hz) +
            " mHz is more than Lua number holds exactly (2^53 - 1)";
   }
   for (size_t i = 0; i < job.num_options; ++i) {
-    const OptionDecl* decl = optionOf(d, job.options[i].name);
-    if (decl == nullptr || !decl->integer) continue;
+    const char* name = job.options[i].name;
+    if (!integerOption(d, name)) continue;
     int64_t v = 0;
     const char* text = job.options[i].value;
     const char* end = text + std::strlen(text);
     const auto parsed = std::from_chars(text, end, v);
     if (parsed.ec != std::errc() || parsed.ptr != end) {
-      return "option '" + decl->name + "' is " + text + ", not whole number from -2^63 to 2^63 - 1";
+      return std::string("option '") + name + "' is " + text + ", not whole number from -2^63 to 2^63 - 1";
     }
     if (v > static_cast<int64_t>(kMaxLuaSamples) || v < -static_cast<int64_t>(kMaxLuaSamples)) {
-      return "option '" + decl->name + "' is " + text +
+      return std::string("option '") + name + "' is " + text +
              ", which Lua decoder cannot hold exactly: use value from -(2^53 - 1) to 2^53 - 1";
     }
   }
@@ -594,7 +415,7 @@ int checkFn(void* user, const bitoscope_decode_job* job, bitoscope_reply* reply)
     }
     lua_State* L = script->state.get();
     const int top = lua_gettop(L);
-    if (script->decl.has_check) {
+    if (script->decl.hasCheck) {
       lua_pushcfunction(L, &callCheck);
       lua_pushlightuserdata(L, const_cast<bitoscope_decode_job*>(job));
       lua_pushlightuserdata(L, script);
@@ -607,7 +428,7 @@ int checkFn(void* user, const bitoscope_decode_job* job, bitoscope_reply* reply)
       }
       lua_settop(L, top);
     }
-    if (script->decl.has_look_ahead) {
+    if (script->decl.hasLookAhead) {
       lua_pushcfunction(L, &callLookAhead);
       lua_pushlightuserdata(L, const_cast<bitoscope_decode_job*>(job));
       lua_pushlightuserdata(L, script);
@@ -619,7 +440,7 @@ int checkFn(void* user, const bitoscope_decode_job* job, bitoscope_reply* reply)
       }
       const auto samples = static_cast<uint64_t>(lua_tonumber(L, -1));
       lua_settop(L, top);
-      if (samples != 0) bitoscope_reply_look_ahead(reply, samples);
+      if (samples != 0) bitoscope_reply_look_ahead_samples(reply, samples);
     }
     return BITOSCOPE_OK;
   } catch (const std::bad_alloc&) {
@@ -679,12 +500,13 @@ std::expected<std::unique_ptr<Gateway::Script>, std::string> loadScript(Source s
   }
   Declaration decl = readDeclaration(L, -1);
   lua_pop(L, 1);
-  if (!decl.version || decl.version->empty()) {
-    return std::unexpected(source.chunk_name + ": decoder '" + decl.name +
+  const plugin::DecoderDeclaration& d = decl.decoder;
+  if (d.version.empty()) {
+    return std::unexpected(source.chunk_name + ": decoder '" + d.name +
                            "' declares no version (script writes version = \"X.Y.Z\", such as \"1.0.0\")");
   }
-  if (auto parsed = ipc::parsePluginVersion(*decl.version); !parsed) {
-    return std::unexpected(source.chunk_name + ": decoder '" + decl.name + "': " + parsed.error());
+  if (auto parsed = ipc::parsePluginVersion(d.version); !parsed) {
+    return std::unexpected(source.chunk_name + ": decoder '" + d.name + "': " + parsed.error());
   }
   return std::unique_ptr<Gateway::Script>(new Gateway::Script{std::move(source.label), std::move(source.chunk_name),
                                                               std::move(source.text), std::move(*state),
@@ -696,10 +518,11 @@ std::expected<std::unique_ptr<Gateway::Script>, std::string> loadScript(Source s
 int refuseDeclaration(lua_State* L) {
   std::string refusal;
   try {
-    const Declaration d = readDeclaration(L, 1);
+    plugin::DecoderDeclaration d = std::move(readDeclaration(L, 1).decoder);
     // WHY: Stand-in version: loadScript refuses script's version afterwards in gateway's own words.
-    const SdkDecoder decoder(d, "1.0.0", &refusedDecode, nullptr, nullptr);
-    auto checked = plugin_c_sdk::declarationOf(decoder.decoder(), sizeof(bitoscope_decoder));
+    d.version = "1.0.0";
+    const plugin_c_sdk::CDeclaration decoder(std::move(d), &refusedDecode, nullptr, nullptr);
+    auto checked = plugin_c_sdk::declarationOf(decoder.get(), sizeof(bitoscope_decoder));
     if (!checked) refusal = std::move(checked.error());
   } catch (const std::bad_alloc&) {
     refusal = "Lua gateway ran out of memory checking declaration";
@@ -754,11 +577,11 @@ std::expected<std::unique_ptr<Gateway>, std::string> Gateway::load(
       std::string message;
       if (!script) {
         message = label + " is left out: " + script.error();
-      } else if (auto it = taken.find((*script)->decl.name); it != taken.end()) {
-        message = label + " is left out: its decoder '" + (*script)->decl.name +
+      } else if (auto it = taken.find((*script)->decl.decoder.name); it != taken.end()) {
+        message = label + " is left out: its decoder '" + (*script)->decl.decoder.name +
                   "' has name already taken by decoder of " + it->second;
       } else {
-        taken.emplace((*script)->decl.name, label);
+        taken.emplace((*script)->decl.decoder.name, label);
         gateway->scripts_.push_back(std::move(*script));
         continue;
       }
@@ -775,7 +598,7 @@ const std::vector<std::string>& Gateway::messages() const { return messages_; }
 
 std::vector<std::string> Gateway::decoderNames() const {
   std::vector<std::string> names;
-  for (const auto& s : scripts_) names.push_back(s->decl.name);
+  for (const auto& s : scripts_) names.push_back(s->decl.decoder.name);
   return names;
 }
 
@@ -787,15 +610,14 @@ int Gateway::list(void* user, bitoscope_decoders* decoders) {
       return BITOSCOPE_ERROR;
     }
     for (const auto& script : gateway->scripts_) {
-      const Declaration& d = script->decl;
-      for (const AbbreviationDecl& a : d.abbreviations) {
+      for (const Abbreviation& a : script->decl.abbreviations) {
         (void)bitoscope_add_abbreviation(a.upper.c_str(), a.shown.empty() ? nullptr : a.shown.c_str(),
-                                         a.also_word ? 1 : 0);
+                                         a.alsoWord ? 1 : 0);
       }
-      const SdkDecoder decoder(d, d.version ? d.version->c_str() : nullptr, &decodeFn, &checkFn, script.get());
-      if (bitoscope_add_decoder(decoders, decoder.decoder()) != BITOSCOPE_OK) {
+      const plugin_c_sdk::CDeclaration decoder(script->decl.decoder, &decodeFn, &checkFn, script.get());
+      if (bitoscope_add_decoder(decoders, decoder.get()) != BITOSCOPE_OK) {
         bitoscope_log(BITOSCOPE_LOG_WARNING, "%s is left out: SDK refused its decoder '%s' (reason is above)",
-                      script->label.c_str(), d.name.c_str());
+                      script->label.c_str(), script->decl.decoder.name.c_str());
       }
     }
     return BITOSCOPE_OK;

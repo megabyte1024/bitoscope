@@ -27,8 +27,6 @@ struct LaneConstants {
 };
 static_assert(sizeof(LaneConstants) % 16 == 0);
 
-constexpr std::uint32_t kMaxTextureEdge = 8192;
-
 // WHY: Hand-transcribed from waveform.frag and classifyLanePixel() in waveform_pixel.h: keep all three in step.
 constexpr char kShaderSource[] = R"(
 cbuffer LaneConstants : register(b0) {
@@ -127,17 +125,7 @@ std::string failure(const char* what, HRESULT hr) {
 D3d11WaveformRenderer::D3d11WaveformRenderer(ID3D11Device* device, ID3D11DeviceContext* context)
     : device_(device), context_(context) {}
 
-void D3d11WaveformRenderer::problem(std::string line) {
-  if (problems_.empty() || problems_.back() != line) {
-    problems_.push_back(std::move(line));
-  }
-}
-
-std::vector<std::string> D3d11WaveformRenderer::takeProblems() {
-  std::vector<std::string> out;
-  out.swap(problems_);
-  return out;
-}
+std::vector<std::string> D3d11WaveformRenderer::takeProblems() { return table_.takeProblems(); }
 
 bool D3d11WaveformRenderer::ensurePipeline() {
   if (pipelineTried_) {
@@ -153,7 +141,7 @@ bool D3d11WaveformRenderer::ensurePipeline() {
       std::string text = errors ? std::string(static_cast<const char*>(errors->GetBufferPointer()),
                                               errors->GetBufferSize())
                                 : std::string();
-      problem(std::format("{}: {}", failure("compiling shader", hr), text));
+      table_.problem(std::format("{}: {}", failure("compiling shader", hr), text));
       return false;
     }
     return true;
@@ -165,12 +153,12 @@ bool D3d11WaveformRenderer::ensurePipeline() {
   }
   HRESULT hr = device_->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &vertexShader_);
   if (FAILED(hr)) {
-    problem(failure("CreateVertexShader", hr));
+    table_.problem(failure("CreateVertexShader", hr));
     return false;
   }
   hr = device_->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &pixelShader_);
   if (FAILED(hr)) {
-    problem(failure("CreatePixelShader", hr));
+    table_.problem(failure("CreatePixelShader", hr));
     return false;
   }
   D3D11_BUFFER_DESC cb{};
@@ -179,7 +167,7 @@ bool D3d11WaveformRenderer::ensurePipeline() {
   cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
   cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
   if (hr = device_->CreateBuffer(&cb, nullptr, &constants_); FAILED(hr)) {
-    problem(failure("CreateBuffer (constants)", hr));
+    table_.problem(failure("CreateBuffer (constants)", hr));
     return false;
   }
   D3D11_RASTERIZER_DESC rs{};
@@ -188,7 +176,7 @@ bool D3d11WaveformRenderer::ensurePipeline() {
   rs.ScissorEnable = TRUE;
   rs.DepthClipEnable = TRUE;
   if (hr = device_->CreateRasterizerState(&rs, &rasterizer_); FAILED(hr)) {
-    problem(failure("CreateRasterizerState", hr));
+    table_.problem(failure("CreateRasterizerState", hr));
     return false;
   }
   // WHY: Standard alpha blending: the high-level fill has a real alpha, every other colour is written with alpha 1.0.
@@ -202,14 +190,14 @@ bool D3d11WaveformRenderer::ensurePipeline() {
   bs.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
   bs.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
   if (hr = device_->CreateBlendState(&bs, &blend_); FAILED(hr)) {
-    problem(failure("CreateBlendState", hr));
+    table_.problem(failure("CreateBlendState", hr));
     return false;
   }
   D3D11_DEPTH_STENCIL_DESC ds{};
   ds.DepthEnable = FALSE;
   ds.StencilEnable = FALSE;
   if (hr = device_->CreateDepthStencilState(&ds, &depth_); FAILED(hr)) {
-    problem(failure("CreateDepthStencilState", hr));
+    table_.problem(failure("CreateDepthStencilState", hr));
     return false;
   }
   pipelineReady_ = true;
@@ -218,24 +206,18 @@ bool D3d11WaveformRenderer::ensurePipeline() {
 
 void D3d11WaveformRenderer::upload(std::uint64_t view, std::uint32_t width, std::uint32_t rows,
                                    std::span<const std::uint8_t> levels) {
+  const gui_waveform_frame::UploadChange change = table_.upload(view, width, rows, levels.size());
+  if (change == gui_waveform_frame::UploadChange::Rejected || change == gui_waveform_frame::UploadChange::TooLarge) {
+    views_.erase(view);
+    return;
+  }
   View& v = views_[view];
-  if (width == 0 || rows == 0 || levels.size() != static_cast<std::size_t>(width) * rows) {
-    v = View{};
-    return;
-  }
-  if (width > kMaxTextureEdge || rows > kMaxTextureEdge) {
-    v = View{};
-    problem(std::format("Waveform pass: view of {} x {} columns and rows is larger than "
-                        "texture may be ({})", width, rows, kMaxTextureEdge));
-    return;
-  }
-  if (v.texture && v.width == width && v.rows == rows) {
+  if (change == gui_waveform_frame::UploadChange::Refreshed && v.texture) {
     context_->UpdateSubresource(v.texture.Get(), 0, nullptr, levels.data(), width, 0);
     return;
   }
   v.texture.Reset();
   v.levels.Reset();
-  v.width = v.rows = 0;
   D3D11_TEXTURE2D_DESC desc{};
   desc.Width = width;
   desc.Height = rows;
@@ -250,22 +232,19 @@ void D3d11WaveformRenderer::upload(std::uint64_t view, std::uint32_t width, std:
   data.SysMemPitch = width;
   HRESULT hr = device_->CreateTexture2D(&desc, &data, &v.texture);
   if (FAILED(hr)) {
-    problem(failure("CreateTexture2D", hr));
+    table_.problem(failure("CreateTexture2D", hr));
+    release(view);
     return;
   }
   hr = device_->CreateShaderResourceView(v.texture.Get(), nullptr, &v.levels);
   if (FAILED(hr)) {
-    v.texture.Reset();
-    problem(failure("CreateShaderResourceView", hr));
-    return;
+    table_.problem(failure("CreateShaderResourceView", hr));
+    release(view);
   }
-  v.width = width;
-  v.rows = rows;
 }
 
 bool D3d11WaveformRenderer::holds(std::uint64_t view, std::uint32_t width, std::uint32_t rows) const {
-  const auto it = views_.find(view);
-  return it != views_.end() && it->second.levels && it->second.width == width && it->second.rows == rows;
+  return table_.holds(view, width, rows);
 }
 
 void D3d11WaveformRenderer::draw(ImDrawList* drawList, std::uint64_t view, float left,
@@ -290,7 +269,8 @@ void D3d11WaveformRenderer::callback(const ImDrawList*, const ImDrawCmd* cmd) {
 
 void D3d11WaveformRenderer::render(std::uint64_t view, const ImDrawCmd* cmd) {
   const auto it = views_.find(view);
-  if (it == views_.end() || !it->second.levels || !ensurePipeline()) {
+  const gui_waveform_frame::ViewShape* shape = table_.find(view);
+  if (it == views_.end() || shape == nullptr || !it->second.levels || !ensurePipeline()) {
     return;
   }
   const View& v = it->second;
@@ -330,19 +310,19 @@ void D3d11WaveformRenderer::render(std::uint64_t view, const ImDrawCmd* cmd) {
   const float left = std::round((v.left - origin.x) * scale.x);
   const float lineWidth = (std::max)(1.0f, std::round(v.lineWidth * scale.y));
   for (const Lane& lane : v.lanes) {
-    if (lane.row >= v.rows) {
+    if (lane.row >= shape->rows) {
       continue;
     }
     D3D11_MAPPED_SUBRESOURCE mapped{};
     const HRESULT hr = context_->Map(constants, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
     if (FAILED(hr)) {
-      problem(failure("Map (lane constants)", hr));
+      table_.problem(failure("Map (lane constants)", hr));
       return;
     }
     LaneConstants c{};
     c.band[0] = left;
     c.band[1] = std::round((lane.top - origin.y) * scale.y);
-    c.band[2] = left + static_cast<float>(v.width);
+    c.band[2] = left + static_cast<float>(shape->width);
     c.band[3] = std::round((lane.bottom - origin.y) * scale.y);
     std::memcpy(c.highColor, lane.highColor.data(), sizeof(c.highColor));
     std::memcpy(c.lowColor, lane.lowColor.data(), sizeof(c.lowColor));
@@ -361,6 +341,7 @@ void D3d11WaveformRenderer::render(std::uint64_t view, const ImDrawCmd* cmd) {
 }
 
 void D3d11WaveformRenderer::release(std::uint64_t view) {
+  table_.release(view);
   views_.erase(view);
 }
 

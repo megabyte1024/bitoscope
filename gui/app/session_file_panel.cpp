@@ -437,7 +437,7 @@ void GuiApp::opened(const std::filesystem::path& path,
     ui.loadedDecoderPresentation = panel.decoderPresentation;
     ui.loadedDecoderVersions = panel.decoderVersions;
     std::vector<std::optional<std::size_t>> entries;
-    const std::vector<gui_decode::CapturedChannel> fileChannels = capturedChannelsFor(ui);
+    const std::vector<gui_decode::CapturedChannel> fileChannels = capturedChannelsFor(ui, ui.keptDeviceChannels);
     for (std::size_t n = 0; n < panel.decoderSetup.size(); ++n) {
       const auto& [decoderName, specRest] = panel.decoderSetup[n];
       // WHY: Already rebuilt configs go along as `earlier`, so two unnamed decoders of one name get different ids.

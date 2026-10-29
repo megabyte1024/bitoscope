@@ -18,4 +18,10 @@ std::optional<uint64_t> CursorPair::deltaFrequencyMilliHz(uint64_t sampleRateMil
   return frequencyMilliHzFromPeriod(delta);
 }
 
+std::optional<CursorPair> cursorsAfterTrim(const CursorPair& cursors, uint64_t first, uint64_t count) {
+  const auto inside = [&](uint64_t sample) { return sample >= first && sample - first < count; };
+  if (!inside(cursors.first()) || !inside(cursors.second())) return std::nullopt;
+  return CursorPair(cursors.first() - first, cursors.second() - first);
+}
+
 }

@@ -6,16 +6,21 @@
 #include "hdf5_lock.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <format>
+#include <memory>
 #include <new>
 #include <thread>
 #include <variant>
 #include <vector>
 
 #include <hdf5.h>
+#include <zlib.h>
 
 #include "arena_growth.h"
+#include "chunk_inflate.h"
+#include "pack_pool.h"
 #include "ring_config.h"
 #include "system_memory_probe.h"
 
@@ -40,9 +45,9 @@ using bitoscope::host::WindowPool;
 
 constexpr uint32_t kFormatVersion = 4;
 
-std::unexpected<std::string> fail(std::string_view what) {
-  return std::unexpected(std::format("HDF5: {}", what));
-}
+std::string hdf5Text(std::string_view what) { return std::format("HDF5: {}", what); }
+
+std::unexpected<std::string> fail(std::string_view what) { return std::unexpected(hdf5Text(what)); }
 
 // WHY: Use UTF-8, not path::string(): that narrows through the ANSI code page on Windows.
 std::string utf8Path(const std::filesystem::path& path) {
@@ -495,6 +500,54 @@ std::expected<RequestFields, std::string> readRequestFields(hid_t group, uint64_
   return out;
 }
 
+bool isDeflatedInWindows(hid_t dataset, uint64_t window_bytes) {
+  Handle plist(H5Dget_create_plist(dataset), H5Pclose);
+  if (!plist.ok() || H5Pget_layout(plist.id()) != H5D_CHUNKED) return false;
+  hsize_t chunk = 0;
+  if (H5Pget_chunk(plist.id(), 1, &chunk) != 1 || chunk != window_bytes) return false;
+  if (H5Pget_nfilters(plist.id()) != 1) return false;
+  unsigned flags = 0;
+  size_t parameter_count = 0;
+  return H5Pget_filter2(plist.id(), 0, &flags, &parameter_count, nullptr, 0, nullptr, nullptr) == H5Z_FILTER_DEFLATE;
+}
+
+bool readChannelBytes(const ChannelEntry& channel, uint64_t byte_offset, uint64_t n_bytes, std::span<uint8_t> row) {
+  const hsize_t start = static_cast<hsize_t>(byte_offset);
+  const hsize_t count = static_cast<hsize_t>(n_bytes);
+  Handle file_space(H5Dget_space(channel.dataset.id()), H5Sclose);
+  if (!file_space.ok() ||
+      H5Sselect_hyperslab(file_space.id(), H5S_SELECT_SET, &start, nullptr, &count, nullptr) < 0) {
+    return false;
+  }
+  Handle mem_space(H5Screate_simple(1, &count, nullptr), H5Sclose);
+  return mem_space.ok() && H5Dread(channel.dataset.id(), H5T_NATIVE_UINT8, mem_space.id(), file_space.id(),
+                                   H5P_DEFAULT, row.data()) >= 0;
+}
+
+struct WindowJob {
+  std::vector<std::unique_ptr<uint8_t[]>> stored;
+  std::vector<size_t> stored_bytes;
+  std::optional<std::string> failure;
+};
+
+struct LoadShape {
+  uint32_t workers = 1;
+  uint32_t depth = 1;
+};
+
+LoadShape loadShape(const Hdf5ReaderOptions& options, const CapturePlan& plan) {
+  constexpr uint32_t kMostWorkers = 8;
+  constexpr uint64_t kInFlightBytes = 64ULL << 20;
+  constexpr uint64_t kBuffersPerWindow = 3;
+  const uint32_t machine =
+      (std::min)(bitoscope::acquisition::defaultClearingWorkers(std::thread::hardware_concurrency()), kMostWorkers);
+  const uint64_t workers = (std::max)(options.pack_workers.value_or(machine), uint32_t{1});
+  const uint64_t window_bytes = uint64_t{plan.channels()} * (plan.samplesPerWindow() / 8);
+  const uint64_t by_bytes = (std::max)(kInFlightBytes / (kBuffersPerWindow * window_bytes), uint64_t{2});
+  const uint64_t depth = (std::min)({workers + 1, by_bytes, plan.slots()});
+  return {static_cast<uint32_t>((std::min)(workers, depth)), static_cast<uint32_t>(depth)};
+}
+
 std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntry>& channels,
                                                           uint64_t sample_rate_milli_hz,
                                                           uint64_t stored_samples,
@@ -540,12 +593,87 @@ std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntr
   if (!created) return fail(created.error());
   RawCaptureBuffer buffer = std::move(*created);
 
-  WindowPool pool(1, plan->channels(), plan->samplesPerWindow());
-  auto lease = pool.acquire();
-  if (!lease) return fail("could not acquire window buffer while loading");
-
   const uint64_t bytes_per_full_window = plan->samplesPerWindow() / 8;
-  for (uint64_t w = 0; w < plan->slots(); ++w) {
+  std::vector<bool> deflated;
+  deflated.reserve(channels.size());
+  for (const ChannelEntry& c : channels) deflated.push_back(isDeflatedInWindows(c.dataset.id(), bytes_per_full_window));
+
+  const LoadShape shape = loadShape(options, *plan);
+  std::vector<WindowJob> jobs(shape.depth + 1);
+  for (WindowJob& job : jobs) {
+    job.stored.resize(channels.size());
+    job.stored_bytes.assign(channels.size(), 0);
+    for (size_t c = 0; c < channels.size(); ++c) {
+      if (deflated[c]) job.stored[c] = std::make_unique_for_overwrite<uint8_t[]>(compressBound(static_cast<uLong>(bytes_per_full_window)));
+    }
+  }
+  WindowPool leases(shape.depth + 1, plan->channels(), plan->samplesPerWindow());
+
+  std::atomic<bool> failed{false};
+  std::string failure;
+  uint64_t committed = 0;
+  const auto stop = [&](std::string text) {
+    failure = std::move(text);
+    failed.store(true, std::memory_order_release);
+  };
+  const auto commit = [&](const WindowInfo& info, const std::expected<bitoscope::capture::PackedWindow, std::string>& packed) {
+    if (failed.load(std::memory_order_acquire)) return;
+    const uint64_t seq = committed++;
+    try {
+      if (!packed) {
+        stop(jobs[seq % jobs.size()].failure
+                 ? packed.error()
+                 : hdf5Text(std::format("cannot store window at sample {}: {}", info.first_sample_index, packed.error())));
+        return;
+      }
+      auto outcome = buffer.appendPacked(*packed, &arena->growth);
+      if (!outcome) {
+        stop(hdf5Text(std::format("cannot store window at sample {}: {}", info.first_sample_index, outcome.error())));
+      } else if (*outcome != bitoscope::capture::AppendOutcome::Stored && arena->growth.bytesTaken() == 0) {
+        stop(hdf5Text(std::format("not enough memory to load capture: first memory block of {} bytes could not be taken "
+                                  "(file's samples need {} bytes unpacked); free memory and open file again",
+                                  first_block_bytes, plan->totalBytes())));
+      } else if (*outcome != bitoscope::capture::AppendOutcome::Stored) {
+        stop(hdf5Text(std::format(
+            "not enough memory to load capture: memory ran out near sample {} of {}, its packed samples need more than "
+            "{} bytes ({} bytes unpacked); free memory and open file again",
+            info.first_sample_index, stored_samples, arena->growth.bytesTaken(), plan->totalBytes())));
+      }
+    } catch (const std::bad_alloc&) {
+      stop(hdf5Text("out of memory loading capture"));
+    }
+  };
+  const auto prepare = [&](uint64_t seq, bitoscope::host::WindowLease& lease) -> std::expected<void, std::string> {
+    WindowJob& job = jobs[seq % jobs.size()];
+    if (job.failure) return std::unexpected(*job.failure);
+    for (uint32_t c = 0; c < channels.size(); ++c) {
+      const std::span<uint8_t> row = lease.channel(c);
+      if (job.stored_bytes[c] != 0) {
+        const std::span<const uint8_t> stored(job.stored[c].get(), job.stored_bytes[c]);
+        if (!inflateChunk(stored, true, row)) {
+          job.failure = hdf5Text(std::format("cannot read channel {} at byte {}", channels[c].index, seq * bytes_per_full_window));
+          return std::unexpected(*job.failure);
+        }
+      }
+    }
+    return {};
+  };
+
+  bitoscope::capture::PackPoolConfig pool_config;
+  pool_config.workers = shape.workers;
+  pool_config.depth = shape.depth;
+  pool_config.prepare = prepare;
+  pool_config.hooks = options.pack_hooks_for_test;
+  auto pool = bitoscope::capture::PackPool::create(buffer, std::move(pool_config), commit);
+  if (!pool) return fail(pool.error());
+
+  std::optional<std::string> stopped;
+  for (uint64_t w = 0; w < plan->slots() && !failed.load(std::memory_order_acquire); ++w) {
+    auto lease = leases.acquire();
+    if (!lease) {
+      stopped = "could not acquire window buffer while loading";
+      break;
+    }
     const uint64_t n = plan->slotSamples(w);
     const uint64_t byte_offset = w * bytes_per_full_window;
     const uint64_t n_bytes = (n + 7) / 8;
@@ -553,41 +681,38 @@ std::expected<RawCaptureBuffer, std::string> buildBuffer(std::vector<ChannelEntr
     WindowInfo& info = lease->info();
     info.first_sample_index = w * plan->samplesPerWindow();
     info.sample_rate_milli_hz = sample_rate_milli_hz;
-    info.gap_samples_before = 0;
     info.num_channels = plan->channels();
     info.num_samples = static_cast<uint32_t>(n);
 
-    for (uint32_t c = 0; c < channels.size(); ++c) {
-      const std::span<uint8_t> dst = lease->channel(c).first(static_cast<size_t>(n_bytes));
-      const hsize_t start = static_cast<hsize_t>(byte_offset);
-      const hsize_t count = static_cast<hsize_t>(n_bytes);
-      Handle file_space(H5Dget_space(channels[c].dataset.id()), H5Sclose);
-      if (!file_space.ok() ||
-          H5Sselect_hyperslab(file_space.id(), H5S_SELECT_SET, &start, nullptr, &count, nullptr) < 0) {
-        return fail(std::format("cannot select channel {} at byte {}", channels[c].index, byte_offset));
+    WindowJob& job = jobs[w % jobs.size()];
+    job.failure.reset();
+    for (uint32_t c = 0; c < channels.size() && !job.failure; ++c) {
+      job.stored_bytes[c] = 0;
+      if (deflated[c]) {
+        size_t stored_bytes = compressBound(static_cast<uLong>(bytes_per_full_window));
+        uint32_t filter_mask = 0;
+        const hsize_t chunk_offset = static_cast<hsize_t>(byte_offset);
+        if (H5Dread_chunk2(channels[c].dataset.id(), H5P_DEFAULT, &chunk_offset, &filter_mask, job.stored[c].get(),
+                           &stored_bytes) >= 0 &&
+            filter_mask == 0 && stored_bytes != 0) {
+          job.stored_bytes[c] = stored_bytes;
+          continue;
+        }
       }
-      Handle mem_space(H5Screate_simple(1, &count, nullptr), H5Sclose);
-      if (!mem_space.ok() ||
-          H5Dread(channels[c].dataset.id(), H5T_NATIVE_UINT8, mem_space.id(), file_space.id(),
-                  H5P_DEFAULT, dst.data()) < 0) {
-        return fail(std::format("cannot read channel {} at byte {}", channels[c].index, byte_offset));
+      if (!readChannelBytes(channels[c], byte_offset, n_bytes, lease->channel(c))) {
+        job.failure = hdf5Text(std::format("cannot read channel {} at byte {}", channels[c].index, byte_offset));
       }
     }
-
-    auto outcome = buffer.appendWindow(*lease, arena->growth);
-    if (!outcome) return fail(std::format("cannot store window at sample {}: {}", info.first_sample_index, outcome.error()));
-    if (*outcome != bitoscope::capture::AppendOutcome::Stored && arena->growth.bytesTaken() == 0) {
-      return fail(std::format("not enough memory to load capture: first memory block of {} bytes could not be taken "
-                              "(file's samples need {} bytes unpacked); free memory and open file again",
-                              first_block_bytes, plan->totalBytes()));
+    if (auto dispatched = (*pool)->dispatch(std::move(*lease), bitoscope::host::WaitLimit{}); !dispatched) {
+      stopped = "loading stopped before every window was handed over";
+      break;
     }
-    if (*outcome != bitoscope::capture::AppendOutcome::Stored) {
-      return fail(std::format(
-          "not enough memory to load capture: memory ran out near sample {} of {}, its packed samples need more than "
-          "{} bytes ({} bytes unpacked); free memory and open file again",
-          info.first_sample_index, stored_samples, arena->growth.bytesTaken(), plan->totalBytes()));
-    }
+    if (job.failure) break;
   }
+  (*pool)->drain();
+  pool->reset();
+  if (failed.load(std::memory_order_acquire)) return std::unexpected(failure);
+  if (stopped) return fail(*stopped);
   if (auto done = buffer.finalize(); !done) return fail(done.error());
   if (auto released = buffer.releaseUnusedBlocks(); !released) return fail(released.error());
   return buffer;

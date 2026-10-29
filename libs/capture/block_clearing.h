@@ -27,4 +27,6 @@ class SystemClearingThreads final : public ClearingThreads {
 void clearBlocks(std::span<const std::span<uint8_t>> blocks, uint32_t workers, ClearingThreads& threads);
 void clearBlocks(std::span<const std::span<uint8_t>> blocks, uint32_t workers);
 
+void commitBlocks(std::span<const std::span<uint8_t>> blocks, uint32_t workers, ClearingThreads& threads);
+
 }

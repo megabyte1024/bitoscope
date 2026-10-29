@@ -48,6 +48,8 @@ struct RunCapture {
   bitoscope::capture::ExtentTail tail = bitoscope::capture::ExtentTail::Exact;
 };
 
+class LiveRunCapture;
+
 class DecoderRunner {
  public:
   DecoderRunner(std::uint64_t run, SignalViewSource views, bitoscope::decode::ChainPlan plan,
@@ -55,6 +57,9 @@ class DecoderRunner {
                 DecodeThreadSetup threadSetup = {}, ProgressClock clock = {},
                 std::function<void(std::size_t instance)> beforeThreadStart = {},
                 std::optional<RunCapture> capture = {});
+  DecoderRunner(std::uint64_t run, std::shared_ptr<const LiveRunCapture> live, bitoscope::decode::ChainPlan plan,
+                bitoscope::gui_events::GuiEventQueue& queue, DecodeMemory memory = {},
+                DecodeThreadSetup threadSetup = {}, ProgressClock clock = {});
   DecoderRunner(std::uint64_t run, const bitoscope::decode::SignalView& view, bitoscope::decode::ChainPlan plan,
                 bitoscope::gui_events::GuiEventQueue& queue, DecodeMemory memory = {});
   DecoderRunner(std::uint64_t run, const bitoscope::decode::SignalView& view,
@@ -67,6 +72,8 @@ class DecoderRunner {
   void cancel();
   bool done() const;
   void join();
+  bool readsGrowingCapture(std::size_t position) const;
+  bool ranOutOfBudget(std::size_t position) const;
 
  private:
   struct Work;

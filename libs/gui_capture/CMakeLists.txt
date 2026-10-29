@@ -8,6 +8,8 @@ add_library(bitoscope_gui_capture STATIC
     capture_runner.cpp
     capture_runner.h
     capture_settings.cpp
+    capture_trim.cpp
+    capture_trim.h
     capture_settings.h
     capture_status.cpp
     capture_status.h
@@ -25,6 +27,8 @@ add_library(bitoscope_gui_capture STATIC
     panel_capture.h
     start_flow.cpp
     start_flow.h
+    unsaved_mark.cpp
+    unsaved_mark.h
     unsaved_policy.h
 )
 

@@ -333,7 +333,7 @@ bool bitoscope_decode_input::fetch(uint64_t wanted) {
     switch (read.status) {
       case pr::DecodeReadStatus::Record:
         hold(read.record);
-        return true;
+        return !failed_;
       case pr::DecodeReadStatus::Pending:
         continue;
       case pr::DecodeReadStatus::Ended:
@@ -374,6 +374,13 @@ void bitoscope_decode_input::failLookBack(uint64_t sample) {
 }
 
 void bitoscope_decode_input::hold(const pr::DecodeRecord& r) {
+  const uint64_t end = r.first_sample + r.num_samples;
+  if (bound_ && end > *bound_) {
+    failIntegrity("host's stream ran past job's bound: its record of samples " + std::to_string(r.first_sample) +
+                  " to " + std::to_string(end - 1) + " goes past " + std::to_string(*bound_) +
+                  " samples, most job's capture can hold");
+    return;
+  }
   Span span;
   span.view.first_sample = r.first_sample;
   span.view.num_samples = r.num_samples;
@@ -386,7 +393,7 @@ void bitoscope_decode_input::hold(const pr::DecodeRecord& r) {
     span.view.levels = r.payload.data();
   }
   window_.push_back(span);
-  arrived_ = r.first_sample + r.num_samples;
+  arrived_ = end;
   trim();
 }
 
@@ -463,28 +470,26 @@ bool bitoscope_decode_input::drain() {
 
 
 
-struct bitoscope_annotations::Items final : decode::StreamSink {
+struct bitoscope_annotations::Items {
   Items(uint64_t samples, std::vector<decode::GuardedOutput> outputs, DeliverItems deliver_to, size_t batch_size)
       : pending(outputs.size()),
         collected(outputs.size()),
         deliver(std::move(deliver_to)),
         batch(batch_size == 0 ? 1 : batch_size),
-        guard(*this, samples, std::move(outputs)) {}
-
-  void add(uint32_t output, std::span<const decode::StreamItem> items) override {
-    for (const decode::StreamItem& i : items) pending[output].push_back({i.begin, i.end, i.value, i.kind, i.flags});
-  }
+        guard(samples, std::move(outputs)) {}
 
   std::vector<std::vector<bitoscope_stream_item>> pending;
   std::vector<std::vector<bitoscope_stream_item>> collected;
   DeliverItems deliver;
   size_t batch;
   bool anyPut = false;
-  decode::GuardedStreamSink guard;  // WHY: guard is declared last: it forwards to this object, so it must be destroyed first.
+  decode::StreamGuard guard;
 };
 
 bitoscope_annotations::bitoscope_annotations(bitoscope_decode_input* in, Deliver deliver, size_t batch)
-    : in_(in), deliver_(std::move(deliver)), batch_(batch == 0 ? 1 : batch) {}
+    : in_(in), deliver_(std::move(deliver)), batch_(batch == 0 ? 1 : batch), room_(bitoscope::plugin_c_sdk::kEmitRoom) {
+  openRoom();
+}
 
 bitoscope_annotations::~bitoscope_annotations() = default;
 
@@ -523,18 +528,24 @@ int bitoscope_annotations::put(uint32_t output, const bitoscope_stream_item& ite
     if (!items_) items_ = std::make_unique<Items>(0, std::vector<decode::GuardedOutput>{}, DeliverItems{}, 1);
     Items& items = *items_;
     items.anyPut = true;
-    const decode::StreamItem checked{item.begin, item.end, item.value, item.kind, item.flags};
-    items.guard.add(output, std::span<const decode::StreamItem>(&checked, 1));
-    if (!items.guard.error().empty()) {
+    if (!items.guard.admit(output, decode::StreamItem{item.begin, item.end, item.value, item.kind, item.flags})) {
       in_->fail(items.guard.error());
       return BITOSCOPE_ERROR;
     }
-    if (items.pending[output].size() >= items.batch && !handOnItems(output)) return BITOSCOPE_ERROR;
+    std::vector<bitoscope_stream_item>& pending = items.pending[output];
+    pending.push_back(item);
+    if (pending.size() >= items.batch && !handOnItems(output)) return BITOSCOPE_ERROR;
   } catch (const std::bad_alloc&) {
     in_->fail("out of memory for stream items");
     return BITOSCOPE_ERROR;
   }
   return BITOSCOPE_OK;
+}
+
+bool bitoscope_annotations::itemsEndWithin(uint64_t samples) {
+  if (!items_ || items_->guard.endsWithin(samples)) return true;
+  in_->fail(items_->guard.error());
+  return false;
 }
 
 std::span<const bitoscope_stream_item> bitoscope_annotations::collectedItems(uint32_t output) const {
@@ -559,31 +570,84 @@ bool bitoscope_annotations::handOnItems(uint32_t output) {
   return true;
 }
 
+void bitoscope_annotations::openRoom() {
+  const size_t untilBatch = batch_ > checked_ ? batch_ - checked_ : 1;
+  cursor_.next = room_.data();
+  cursor_.limit = room_.data() + (std::min)(room_.size(), untilBatch);
+}
+
+void bitoscope_annotations::closeRoom() {
+  cursor_.next = room_.data();
+  cursor_.limit = room_.data();
+}
+
+int bitoscope_annotations::closed() {
+  closeRoom();
+  return BITOSCOPE_ERROR;
+}
+
+int bitoscope_annotations::closedIfFailed(int status) {
+  return status == BITOSCOPE_OK ? status : closed();
+}
+
+int bitoscope_annotations::flushRoom() {
+  return cursor_.next == room_.data() ? BITOSCOPE_OK : commitRoom();
+}
+
+int bitoscope_annotations::commitRoom() {
+  if (in_->failed()) return closed();
+  const size_t n = static_cast<size_t>(cursor_.next - room_.data());
+  if (n == 0) return BITOSCOPE_OK;
+  in_->tick(static_cast<uint32_t>(n));
+  if (in_->failed()) return closed();
+  try {
+    const uint64_t limit = endLimit();
+    for (size_t i = 0; i < n; ++i) {
+      if (!admits(room_[i], limit)) {
+        refuse(room_[i]);
+        return closed();
+      }
+    }
+    pending_.insert(pending_.end(), room_.begin(), room_.begin() + static_cast<std::ptrdiff_t>(n));
+    const uint64_t arrived = in_->arrived();
+    while (checked_ < pending_.size() && pending_[checked_].end <= arrived) ++checked_;
+    const bool due = releaseWaiting() && strideDue();
+    if ((checked_ >= batch_ || due) && !handOn(checked_)) return closed();
+  } catch (const std::bad_alloc&) {
+    in_->fail("out of memory for annotations");
+    return closed();
+  }
+  openRoom();
+  return BITOSCOPE_OK;
+}
+
 int bitoscope_annotations::emit(uint64_t begin, uint64_t end, uint32_t row, uint32_t cls, uint64_t value) {
+  if (flushRoom() != BITOSCOPE_OK) return BITOSCOPE_ERROR;
   in_->tick();
-  if (in_->failed()) return BITOSCOPE_ERROR;
-  return admit(bitoscope_annotation{begin, end, row, cls, value});
+  if (in_->failed()) return closed();
+  return closedIfFailed(admit(bitoscope_annotation{begin, end, row, cls, value}));
 }
 
 int bitoscope_annotations::emitBytes(uint64_t begin, uint64_t end, uint32_t row, uint32_t cls,
                                      std::span<const uint8_t> bytes) {
+  if (flushRoom() != BITOSCOPE_OK) return BITOSCOPE_ERROR;
   in_->tick();
-  if (in_->failed()) return BITOSCOPE_ERROR;
+  if (in_->failed()) return closed();
   const bitoscope_annotation a{begin, end, row, cls, 0};
   if (bytes.empty()) {
     in_->fail("annotation [" + std::to_string(begin) + ", " + std::to_string(end) + ") in row " +
               std::to_string(row) + ", class " + std::to_string(cls) +
               " has no bytes: bytes value needs at least one byte");
-    return BITOSCOPE_ERROR;
+    return closed();
   }
   try {
     byte_values_.emplace_back(bytes.begin(), bytes.end());
     byte_owners_.push_back(handed_ + pending_.size());
   } catch (const std::bad_alloc&) {
     in_->fail("out of memory for annotations");
-    return BITOSCOPE_ERROR;
+    return closed();
   }
-  return admit(a);
+  return closedIfFailed(admit(a));
 }
 
 std::span<const uint8_t> bitoscope_annotations::collectedBytes(uint64_t reference) const {
@@ -591,24 +655,30 @@ std::span<const uint8_t> bitoscope_annotations::collectedBytes(uint64_t referenc
   return collected_bytes_[reference];
 }
 
+uint64_t bitoscope_annotations::endLimit() const {
+  return in_->ended() ? in_->arrived() : UINT64_MAX;
+}
+
+bool bitoscope_annotations::admits(const bitoscope_annotation& a, uint64_t limit) const {
+  return !finished_ && a.end > a.begin && a.end <= limit;
+}
+
+void bitoscope_annotations::refuse(const bitoscope_annotation& a) {
+  if (finished_) {
+    in_->fail(describe(a) + " was emitted after job finished");
+  } else if (a.end == a.begin) {
+    in_->fail(describe(a) + " is empty: it ends where it begins");
+  } else if (a.end < a.begin) {
+    in_->fail(describe(a) + " ends before it begins");
+  } else {
+    in_->fail(describe(a) + " ends past capture's " + std::to_string(in_->arrived()) + " samples");
+  }
+}
+
 int bitoscope_annotations::admit(const bitoscope_annotation& a) {
-  const uint64_t begin = a.begin;
-  const uint64_t end = a.end;
   try {
-    if (finished_) {
-      in_->fail(describe(a) + " was emitted after job finished");
-      return BITOSCOPE_ERROR;
-    }
-    if (end == begin) {
-      in_->fail(describe(a) + " is empty: it ends where it begins");
-      return BITOSCOPE_ERROR;
-    }
-    if (end < begin) {
-      in_->fail(describe(a) + " ends before it begins");
-      return BITOSCOPE_ERROR;
-    }
-    if (in_->ended() && end > in_->arrived()) {
-      in_->fail(describe(a) + " ends past capture's " + std::to_string(in_->arrived()) + " samples");
+    if (!admits(a, endLimit())) {
+      refuse(a);
       return BITOSCOPE_ERROR;
     }
     pending_.push_back(a);
@@ -623,6 +693,7 @@ int bitoscope_annotations::admit(const bitoscope_annotation& a) {
 }
 
 int bitoscope_annotations::settle(uint64_t sample) {
+  if (flushRoom() != BITOSCOPE_OK) return BITOSCOPE_ERROR;
   ++settle_calls_;
   if (in_->failed()) return BITOSCOPE_ERROR;
   if (sample == given_) return BITOSCOPE_OK;
@@ -654,6 +725,7 @@ uint64_t bitoscope_annotations::settleDue() const {
 }
 
 int bitoscope_annotations::markEnd(uint64_t end) {
+  if (flushRoom() != BITOSCOPE_OK) return BITOSCOPE_ERROR;
   if (in_->failed()) return BITOSCOPE_ERROR;
   if (end <= passed_) return BITOSCOPE_OK;
   try {
@@ -681,6 +753,7 @@ bool bitoscope_annotations::strideDue() const {
 }
 
 int bitoscope_annotations::finish() {
+  if (flushRoom() != BITOSCOPE_OK) return BITOSCOPE_ERROR;
   if (in_->failed()) return BITOSCOPE_ERROR;
   try {
     if (!finished_) {

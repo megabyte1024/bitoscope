@@ -88,7 +88,7 @@ inline std::expected<void, std::string> runAction(const CliOptions& opts,
           !ceiling.has_value()) {
         return std::unexpected(acquisition::couldNotStartCapture(id, ceiling.error()));
       }
-      auto settings = readAnalyzerSettings(opts.configure, session);
+      auto settings = readAnalyzerSettings(opts.configure, session, &out);
       if (!settings.has_value()) {
         return std::unexpected(settings.error());
       }
@@ -218,6 +218,7 @@ inline std::expected<void, std::string> runAction(const CliOptions& opts,
     case Action::ListDevices:
     case Action::WatchDevices:
     case Action::ListProperties:
+    case Action::CheckDriver:
       break;
   }
   return std::unexpected(

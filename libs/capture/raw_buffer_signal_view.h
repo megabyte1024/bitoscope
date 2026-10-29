@@ -51,30 +51,20 @@ class RawBufferSignalView final : public decode::SignalView {
                                               buffer.sampleCount() > extent_end &&
                                               !records.empty() &&
                                               records.back().first_sample_index < extent_end;
-    if (buffer.sampleCount() != extent_end && !runs_past_inside_last_window) {
+    const bool runs_past_trimmed = tail == ExtentTail::Trimmed && buffer.sampleCount() > extent_end;
+    if (buffer.sampleCount() != extent_end && !runs_past_inside_last_window && !runs_past_trimmed) {
       return std::unexpected(std::format(
           "buffer holds {} samples, but capture's extent is [{}, {})",
           buffer.sampleCount(), extent.first_sample, extent_end));
     }
 
-    uint64_t expected_first = 0;
-    for (size_t i = 0; i < records.size(); ++i) {
+    for (size_t i = 0; i + 1 < records.size(); ++i) {
       const IndexRecord& r = records[i];
-      if (r.first_sample_index != expected_first) {
-        return std::unexpected(std::format("hole: samples {} to {} are missing", expected_first,
-                                           r.first_sample_index));
-      }
-      if (r.gap_samples_before != 0) {
-        return std::unexpected(std::format(
-            "hole: window at sample {} reports {} samples lost before it", r.first_sample_index,
-            r.gap_samples_before));
-      }
-      if (i + 1 < records.size() && r.num_samples % 8 != 0) {
+      if (r.num_samples % 8 != 0) {
         return std::unexpected(std::format(
             "window at sample {} holds {} samples, not whole number of bytes, and another follows",
             r.first_sample_index, r.num_samples));
       }
-      expected_first = r.endSample();
     }
 
     RawBufferSignalView view;

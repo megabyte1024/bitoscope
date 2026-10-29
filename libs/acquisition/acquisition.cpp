@@ -4,13 +4,18 @@
 
 #include "acquisition.h"
 
+#include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cstdio>
 #include <format>
 #include <functional>
 #include <string_view>
 #include <utility>
 
+#include "arena_growth.h"
+#include "block_supply_ahead.h"
+#include "capture_planning.h"
 #include "heap_trim.h"
 #include "la_pipe_client.h"
 #include "raw_capture_buffer.h"
@@ -62,14 +67,16 @@ std::string describeEarlyEnd(const bitoscope::capture::CaptureSummary& summary,
 }
 
 std::optional<std::string> describeUntriggeredMemory(uint64_t samples_floor,
-                                                     const bitoscope::capture::CapturePlan& plan) {
+                                                     const bitoscope::capture::CapturePlan& plan,
+                                                     bool taken_as_it_grows) {
   namespace pd = bitoscope::capture::plan_detail;
   if (samples_floor >= plan.totalSamples()) return std::nullopt;
   return std::format(
-      "possibly not all data will be acquired: at least {} samples ({}) fit even if nothing packs; more "
+      "possibly not all data will be acquired: at least {} samples ({}) fit even if nothing packs{}; more "
       "will fit as data compresses ({} samples, {} requested)",
       pd::withThousands(samples_floor), pd::formatDuration(samples_floor, plan.sampleRateMilliHz()),
-      pd::withThousands(plan.totalSamples()), pd::formatDuration(plan.totalSamples(), plan.sampleRateMilliHz()));
+      taken_as_it_grows ? ", unless memory is taken meanwhile" : "", pd::withThousands(plan.totalSamples()),
+      pd::formatDuration(plan.totalSamples(), plan.sampleRateMilliHz()));
 }
 
 namespace {
@@ -222,9 +229,9 @@ struct DeviceRun {
   std::optional<bitoscope::host::pipe::LaAcquisitionClient> la;
   RingGeometry ring_geometry;
   bitoscope::host::pipe::CaptureRequest request;
-  uint64_t held_back_outside_arena_bytes = 0;
-  std::function<uint64_t(uint64_t)> held_back_for_arena;
+  HeldBack held_back;
   std::optional<bitoscope::capture::Reservation> reservation;
+  std::optional<bitoscope::capture::ArenaGrowth> growth;
   std::vector<AcquireWarning> warnings;
   std::shared_ptr<bitoscope::capture::CaptureSession> capture;
   std::unique_ptr<AttemptRing> ring;
@@ -262,25 +269,8 @@ std::optional<std::string> pluginGone(const DeviceRun& run) {
 
 std::expected<void, std::string> prepareDevice(DeviceRun& run, const AcquisitionSeams& seams) {
   const AcquireRequest& req = run.dev->request;
-  const uint32_t channels = static_cast<uint32_t>(std::popcount(req.channel_mask));
-  // WHY: Triggered plan is pre + post + one whole window (store front
-  // offset, never saved); the spec keeps the TRUE counts.
-  uint64_t plan_total_samples = req.total_samples;
-  if (req.trigger.has_value()) {
-    if (auto validated = req.trigger->validate(channels); !validated) {
-      return std::unexpected("cannot arm trigger: " + validated.error());
-    }
-    const uint64_t pre = req.trigger->pre_trigger_samples;
-    const uint64_t post = req.trigger->post_trigger_samples;
-    if (pre > bitoscope::capture::plan_detail::kMaxU64 - post ||
-        pre + post > bitoscope::capture::plan_detail::kMaxU64 - seams.samples_per_window) {
-      return std::unexpected("cannot arm trigger: requested capture length is too long to plan");
-    }
-    plan_total_samples = pre + post + seams.samples_per_window;
-  }
-  auto plan = bitoscope::capture::makeCapturePlan(channels, req.sample_rate_milli_hz, plan_total_samples,
-                                                   seams.samples_per_window);
-  if (!plan) return std::unexpected("cannot plan capture: " + plan.error());
+  auto plan = planCapture(req, seams);
+  if (!plan) return std::unexpected(plan.error());
   run.plan = *plan;
 
   auto la = makeLaClient(run.dev->device, run.dev->transport, seams.min_la_version);
@@ -288,15 +278,9 @@ std::expected<void, std::string> prepareDevice(DeviceRun& run, const Acquisition
   run.la.emplace(std::move(*la));
 
   if (auto ring_ok = requireBulkRing(run.dev->device, *run.la); !ring_ok) return std::unexpected(ring_ok.error());
-  if (seams.ring_geometry_for_test) {
-    run.ring_geometry = *seams.ring_geometry_for_test;
-  } else {
-    auto geometry = ringGeometryForMiB(req.ring_mib);
-    if (!geometry) {
-      return std::unexpected("cannot size bulk ring (--ring-mib) - nothing was started: " + geometry.error());
-    }
-    run.ring_geometry = *geometry;
-  }
+  auto geometry = ringGeometryFor(req, seams);
+  if (!geometry) return std::unexpected(geometry.error());
+  run.ring_geometry = *geometry;
   const uint64_t first_id = seams.new_capture_id ? seams.new_capture_id() : uint64_t{0};
   if (first_id == 0) return std::unexpected(noCaptureIdMessage());
   // WHY: A triggered capture is sent unbounded: the plan total must not become
@@ -315,32 +299,10 @@ std::expected<void, std::string> prepareDevice(DeviceRun& run, const Acquisition
 }
 
 std::expected<void, std::string> sizeHeldBack(DeviceRun& run) {
-  const AcquireRequest& req = run.dev->request;
-  auto held_back = bitoscope::capture::captureHeldBackBytes(*run.plan, req.pack_workers, req.pyramid);
-  if (!held_back) {
-    return std::unexpected("could not size capture's compression scratch - nothing was started: " +
-                           held_back.error());
-  }
-  auto acquisition_held_back = acquisitionHeldBackBytes(*held_back, run.ring_geometry);
-  if (!acquisition_held_back) {
-    return std::unexpected("could not size capture's memory - nothing was started: " +
-                           acquisition_held_back.error());
-  }
-  run.held_back_outside_arena_bytes = *acquisition_held_back;
-  if (req.pyramid) run.held_back_for_arena = bitoscope::capture::pyramidPlanesHeldBack(*run.plan);
+  auto held_back = heldBackFor(*run.plan, run.dev->request, run.ring_geometry);
+  if (!held_back) return std::unexpected(held_back.error());
+  run.held_back = std::move(*held_back);
   return {};
-}
-
-bitoscope::capture::AllocatorSettings allocatorSettings(const DeviceRun& run, const SessionRequest& session,
-                                                        const AcquisitionSeams& seams) {
-  bitoscope::capture::AllocatorSettings settings;
-  settings.policy = session.memory_policy;
-  settings.arena_block_bytes = seams.arena_block_bytes_for_test;
-  settings.clearing_workers = run.dev->request.clearing_workers;
-  settings.clearing_threads = seams.clearing_threads_for_test;
-  settings.arena_cap = run.trigger().has_value() ? bitoscope::capture::ArenaCap::WholeSlotsWithRingMargin
-                                                 : bitoscope::capture::ArenaCap::Plan;
-  return settings;
 }
 
 // WHY: Triggered floor is the ring floor in whole RAW windows, so no answer promises more than the ring holds.
@@ -365,12 +327,44 @@ std::expected<void, std::string> answerMemory(DeviceRun& run) {
     run.warnings.push_back(AcquireWarning{AcquireWarning::Kind::Memory, warning, std::nullopt});
   }
   if (!run.trigger().has_value()) {
-    if (auto floor = describeUntriggeredMemory(reservation.samplesFloor, *run.plan)) {
+    if (auto floor = describeUntriggeredMemory(reservation.samplesFloor, *run.plan, run.growth.has_value())) {
       run.warnings.push_back(AcquireWarning{AcquireWarning::Kind::Floor, std::move(*floor), reservation.samplesFloor});
     }
   }
   if (trigger_warning.has_value()) run.warnings.push_back(std::move(*trigger_warning));
   return {};
+}
+
+std::expected<void, std::string> reserveGrowing(DeviceRun& run, bitoscope::capture::AllocatorSettings settings,
+                                                const AcquisitionSeams& seams) {
+  settings = growingArenaSettings(std::move(settings));
+  auto budget = bitoscope::capture::computeBudget(seams.probe, settings.budget);
+  if (!budget) return std::unexpected(couldNotReserve(budget.error()));
+  auto grown = bitoscope::capture::planGrowingArena(*run.plan, *budget, seams.probe, seams.blocks, settings);
+  if (!grown) return std::unexpected(couldNotReserve(grown.error()));
+  bitoscope::capture::Reservation& reservation = grown->reservation;
+  if (reservation.samplesFloor == 0) {
+    return std::unexpected(couldNotReserve(bitoscope::capture::noWindowRefusal(*run.plan, budget->bytes)));
+  }
+  auto first = grown->growth.supply(0, reservation.blockSize(0));
+  if (!first) return std::unexpected(couldNotReserve(first.error().why));
+  reservation.blocks[0] = std::move(*first);
+  run.reservation.emplace(std::move(reservation));
+  run.growth.emplace(std::move(grown->growth));
+  return answerMemory(run);
+}
+
+std::chrono::milliseconds blockWait(const DeviceRun& run, const AcquisitionSeams& seams) {
+  constexpr uint64_t kBitsPerByte = 8;
+  constexpr uint64_t kMilli = 1000;
+  const uint64_t ring_bytes = uint64_t{run.ring_geometry.slot_count} * run.ring_geometry.slot_payload_bytes;
+  const uint64_t channel_milli_hz = uint64_t{run.plan->channels()} * run.plan->sampleRateMilliHz();
+  const uint64_t slack_ms = channel_milli_hz == 0
+                                ? seams.inactivity_timeout_ms
+                                : mulDivFloor(ring_bytes, kBitsPerByte * kMilli * kMilli, channel_milli_hz);
+  // WHY: Not under one poll: a source that waits (test, unpaced demo) loses nothing, yet a tiny ring fails it.
+  const uint64_t waited = (std::min)((std::max)(slack_ms, seams.poll_ms), seams.inactivity_timeout_ms);
+  return std::chrono::milliseconds(waited);
 }
 
 template <typename Named>
@@ -381,15 +375,11 @@ std::expected<void, std::string> reserveMemory(std::vector<DeviceRun>& runs, con
   }
   if (runs.size() == 1) {
     DeviceRun& run = runs[0];
-    bitoscope::capture::AllocatorSettings settings = allocatorSettings(run, session, seams);
-    settings.budget.explicit_budget = session.memory_budget_bytes;
-    settings.budget.reserve = session.reserve_bytes;
-    settings.budget.held_back = run.held_back_outside_arena_bytes;
-    settings.budget.held_back_for_arena = run.held_back_for_arena;
+    const bitoscope::capture::AllocatorSettings settings =
+        singleDeviceSettings(run.dev->request, session, seams, run.held_back);
+    if (!run.trigger().has_value()) return reserveGrowing(run, settings, seams);
     auto reservation = bitoscope::capture::allocateCapture(*run.plan, seams.probe, seams.blocks, settings);
-    if (!reservation) {
-      return std::unexpected("could not reserve memory for capture - nothing was started: " + reservation.error());
-    }
+    if (!reservation) return std::unexpected(couldNotReserve(reservation.error()));
     run.reservation.emplace(std::move(*reservation));
     return answerMemory(run);
   }
@@ -397,9 +387,9 @@ std::expected<void, std::string> reserveMemory(std::vector<DeviceRun>& runs, con
   uint64_t held_back = 0;
   uint64_t total_rate = 0;
   for (const DeviceRun& run : runs) {
-    held_back = held_back > bitoscope::capture::plan_detail::kMaxU64 - run.held_back_outside_arena_bytes
+    held_back = held_back > bitoscope::capture::plan_detail::kMaxU64 - run.held_back.outside_arena
                     ? bitoscope::capture::plan_detail::kMaxU64
-                    : held_back + run.held_back_outside_arena_bytes;
+                    : held_back + run.held_back.outside_arena;
     total_rate += uint64_t{run.plan->channels()} * run.plan->sampleRateMilliHz();
   }
   bitoscope::capture::BudgetSettings budget_settings;
@@ -409,9 +399,9 @@ std::expected<void, std::string> reserveMemory(std::vector<DeviceRun>& runs, con
   budget_settings.held_back_for_arena = [&runs, total_rate](uint64_t budget_bytes) {
     uint64_t sum = 0;
     for (const DeviceRun& run : runs) {
-      if (!run.held_back_for_arena) continue;
+      if (!run.held_back.for_arena) continue;
       const uint64_t rate = uint64_t{run.plan->channels()} * run.plan->sampleRateMilliHz();
-      const uint64_t planes = run.held_back_for_arena(mulDivFloor(budget_bytes, rate, total_rate));
+      const uint64_t planes = run.held_back.for_arena(mulDivFloor(budget_bytes, rate, total_rate));
       sum = planes > bitoscope::capture::plan_detail::kMaxU64 - sum ? bitoscope::capture::plan_detail::kMaxU64
                                                                      : sum + planes;
     }
@@ -424,7 +414,7 @@ std::expected<void, std::string> reserveMemory(std::vector<DeviceRun>& runs, con
   for (DeviceRun& run : runs) {
     const uint64_t rate = uint64_t{run.plan->channels()} * run.plan->sampleRateMilliHz();
     const uint64_t share = mulDivFloor(budget->bytes, rate, total_rate);
-    bitoscope::capture::AllocatorSettings settings = allocatorSettings(run, session, seams);
+    bitoscope::capture::AllocatorSettings settings = arenaSettings(run.dev->request, session, seams);
     settings.budget.explicit_budget = share;
     settings.budget.reserve = budget->reserve;
     settings.budget.held_back = budget->held_back;
@@ -457,6 +447,11 @@ std::expected<void, AttemptError> startAttempt(SessionContext& ctx, DeviceRun& r
   config.trigger = run.trigger();
   config.pack_workers = run.dev->request.pack_workers;
   config.live_tail = run.dev->request.live_tail;
+  if (run.growth) {
+    config.block_supply = std::make_shared<bitoscope::capture::BlockSupplyAhead>(*run.growth, blockWait(run, seams),
+                                                                                 seams.clearing_threads_for_test);
+    config.arena_memory = run.growth->memory();
+  }
   auto made = bitoscope::capture::CaptureSession::create(std::move(*buffer), std::move(config));
   if (!made) return fail("could not set up capture session: " + made.error());
   std::shared_ptr<bitoscope::capture::CaptureSession> capture = std::move(*made);
@@ -736,6 +731,30 @@ struct LostStart {
   std::string lost;
 };
 
+struct UserRequests {
+  bool abandon = false;
+  bool stop = false;
+};
+
+UserRequests passUserRequests(const AcquisitionSeams& seams, std::vector<DeviceRun>& runs,
+                              std::optional<uint32_t> memory_full) {
+  const UserRequests asked{seams.abandon_requested && seams.abandon_requested(),
+                           seams.stop_requested && seams.stop_requested()};
+  for (DeviceRun& run : runs) {
+    if (!run.running) continue;
+    if (asked.abandon) {
+      run.capture->requestStop();
+    } else if (asked.stop) {
+      run.capture->requestKeepStop();
+    } else if (memory_full && !run.stopped_for) {
+      run.stopped_for = *memory_full;
+      run.stopped_for_id = runs[*memory_full].id();
+      run.capture->requestSessionStop();
+    }
+  }
+  return asked;
+}
+
 std::expected<SessionResult, std::string> runSessionBody(std::span<const SessionDevice> devices,
                                                          const SessionRequest& session, const AcquisitionSeams& seams,
                                                          AcquisitionEvents& events) {
@@ -788,19 +807,7 @@ std::expected<SessionResult, std::string> runSessionBody(std::span<const Session
 
   std::optional<uint32_t> memory_full;
   for (;;) {
-    const bool abandon = seams.abandon_requested && seams.abandon_requested();
-    const bool user_stop = seams.stop_requested && seams.stop_requested();
-    for (DeviceRun& run : runs) {
-      if (!run.running) continue;
-      if (abandon) run.capture->requestStop();
-      if (user_stop) {
-        run.capture->requestKeepStop();
-      } else if (memory_full && !run.stopped_for) {
-        run.stopped_for = *memory_full;
-        run.stopped_for_id = runs[*memory_full].id();
-        run.capture->requestSessionStop();
-      }
-    }
+    UserRequests asked = passUserRequests(seams, runs, memory_full);
     std::vector<std::pair<DeviceRun*, std::optional<std::string>>> ended;
     std::optional<uint64_t> now;
     for (DeviceRun& run : runs) {
@@ -825,6 +832,9 @@ std::expected<SessionResult, std::string> runSessionBody(std::span<const Session
       }
     }
 
+    // WHY: Read again once an end is seen: a request landing after the first read would be lost to that end.
+    if (!ended.empty()) asked = passUserRequests(seams, runs, memory_full);
+
     const std::string where = attempt > 1 ? " (attempt " + std::to_string(attempt) + " of " +
                                                 std::to_string(attempts_allowed) + ")"
                                           : std::string();
@@ -835,7 +845,7 @@ std::expected<SessionResult, std::string> runSessionBody(std::span<const Session
       if (done) {
         run->result = std::move(*done);
         const auto& shortfall = run->result->memory_shortfall;
-        if (shortfall && shortfall->reason == bitoscope::capture::ShortReason::Memory && !user_stop && !memory_full) {
+        if (shortfall && shortfall->reason == bitoscope::capture::ShortReason::Memory && !asked.stop && !memory_full) {
           memory_full = run->index;
         }
         continue;
@@ -885,12 +895,12 @@ std::expected<SessionResult, std::string> runSessionBody(std::span<const Session
                                                                     : "attempt lost its start: ") +
                                     first.error.message;
       const std::string next = std::to_string(attempt + 1) + " of " + std::to_string(attempts_allowed);
-      if (abandon || (seams.abandon_requested && seams.abandon_requested())) {
+      if (asked.abandon || (seams.abandon_requested && seams.abandon_requested())) {
         return failSession(ctx, runs,
                            named(*first.run, "interrupted before attempt " + next + "; nothing was saved - last " +
                                                  last_lost));
       }
-      if (user_stop || (seams.stop_requested && seams.stop_requested())) {
+      if (asked.stop || (seams.stop_requested && seams.stop_requested())) {
         return failSession(ctx, runs,
                            named(*first.run, "stopped by user before attempt " + next +
                                                  "; nothing was saved - last " + last_lost));
@@ -967,81 +977,12 @@ std::expected<SessionResult, std::string> acquireSession(std::span<const Session
 
 std::expected<MemoryCheck, std::string> checkMemoryBeforeStart(const AcquireRequest& req, const SessionRequest& session,
                                                                const AcquisitionSeams& seams) {
-  const uint32_t channels = static_cast<uint32_t>(std::popcount(req.channel_mask));
-  uint64_t plan_total_samples = req.total_samples;
-  if (req.trigger.has_value()) {
-    if (auto validated = req.trigger->validate(channels); !validated) {
-      return std::unexpected("cannot arm trigger: " + validated.error());
-    }
-    const uint64_t pre = req.trigger->pre_trigger_samples;
-    const uint64_t post = req.trigger->post_trigger_samples;
-    if (pre > bitoscope::capture::plan_detail::kMaxU64 - post ||
-        pre + post > bitoscope::capture::plan_detail::kMaxU64 - seams.samples_per_window) {
-      return std::unexpected("cannot arm trigger: requested capture length is too long to plan");
-    }
-    plan_total_samples = pre + post + seams.samples_per_window;
-  }
-  auto plan = bitoscope::capture::makeCapturePlan(channels, req.sample_rate_milli_hz, plan_total_samples,
-                                                   seams.samples_per_window);
-  if (!plan) return std::unexpected("cannot plan capture: " + plan.error());
-
-  RingGeometry geometry;
-  if (seams.ring_geometry_for_test) {
-    geometry = *seams.ring_geometry_for_test;
-  } else {
-    auto sized = ringGeometryForMiB(req.ring_mib);
-    if (!sized) return std::unexpected("cannot size bulk ring (--ring-mib) - nothing was started: " + sized.error());
-    geometry = *sized;
-  }
-  auto held_back = bitoscope::capture::captureHeldBackBytes(*plan, req.pack_workers, req.pyramid);
-  if (!held_back) {
-    return std::unexpected("could not size capture's compression scratch - nothing was started: " +
-                           held_back.error());
-  }
-  auto acquisition_held_back = acquisitionHeldBackBytes(*held_back, geometry);
-  if (!acquisition_held_back) {
-    return std::unexpected("could not size capture's memory - nothing was started: " +
-                           acquisition_held_back.error());
-  }
-
-  const auto refuse = [](const std::string& why) {
-    return std::unexpected("could not reserve memory for capture - nothing was started: " + why);
-  };
-  bitoscope::capture::BudgetSettings budget_settings;
-  budget_settings.explicit_budget = session.memory_budget_bytes;
-  budget_settings.reserve = session.reserve_bytes;
-  budget_settings.held_back = *acquisition_held_back;
-  if (req.pyramid) budget_settings.held_back_for_arena = bitoscope::capture::pyramidPlanesHeldBack(*plan);
-  auto budget = bitoscope::capture::computeBudget(seams.probe, budget_settings);
-  if (!budget) return refuse(budget.error());
-  const uint64_t asked_block_bytes =
-      seams.arena_block_bytes_for_test != 0 ? seams.arena_block_bytes_for_test : bitoscope::capture::kArenaBlockBytes;
-  const uint64_t cap_bytes = req.trigger.has_value() ? bitoscope::capture::triggeredArenaCap(*plan, asked_block_bytes)
-                                                     : plan->totalBytes();
-  const uint64_t arena_target = (std::min)(budget->bytes, cap_bytes);
-  const auto no_window = [&] {
-    return refuse(std::format(
-        "memory budget of {} bytes holds less than one window of {} bytes ({} channels x {} samples); lower "
-        "rate or channel count, or raise --memory-budget",
-        budget->bytes, plan->slotBytes(0), plan->channels(), plan->slotSamples(0)));
-  };
-  if (arena_target < plan->slotBytes(0)) return no_window();
-  uint64_t block_bytes = (std::min)(asked_block_bytes, arena_target);
-  block_bytes = (std::max)(block_bytes, (uint64_t{plan->samplesPerWindow()} + 7) / 8);
-  const uint64_t block_count = (arena_target + block_bytes - 1) / block_bytes;
-
-  bitoscope::capture::Reservation counted;
-  counted.plan = *plan;
-  counted.slotsRequested = plan->slots();
-  counted.block_bytes = block_bytes;
-  counted.arena_bytes = arena_target;
-  try {
-    counted.blocks.resize(static_cast<size_t>(block_count));
-  } catch (const std::bad_alloc&) {
-    return refuse("out of memory tracking capture's arena");
-  }
-  counted.samplesFloor = (std::min)(bitoscope::capture::guaranteedSamples(counted), plan->totalSamples());
-  if (counted.samplesFloor == 0) return no_window();
+  auto planning = planSingleDevice(req, session, seams);
+  if (!planning) return std::unexpected(planning.error());
+  const bitoscope::capture::CapturePlan* plan = &planning->plan;
+  auto counted_reservation = countedReservation(*planning);
+  if (!counted_reservation) return std::unexpected(counted_reservation.error());
+  const bitoscope::capture::Reservation& counted = *counted_reservation;
 
   MemoryCheck check;
   if (const auto& trigger = req.trigger; trigger.has_value()) {
@@ -1058,7 +999,7 @@ std::expected<MemoryCheck, std::string> checkMemoryBeforeStart(const AcquireRequ
       check.floor_samples = fit.post_floor;
       check.text = std::move(**answer);
     }
-  } else if (auto floor = detail::describeUntriggeredMemory(counted.samplesFloor, *plan)) {
+  } else if (auto floor = detail::describeUntriggeredMemory(counted.samplesFloor, *plan, true)) {
     check.answer = MemoryCheck::Answer::Warn;
     check.floor_samples = counted.samplesFloor;
     check.text = std::move(*floor);

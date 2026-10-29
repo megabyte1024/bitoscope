@@ -293,10 +293,20 @@ RowSummary summarizeLaneRow(const AnnotationGroups& groups, const DerivedRows& d
 RowSummary summarizeLaneRow(AnnotationReader& reader, const DerivedRows& derived, std::uint32_t row,
                             const DecoderVisibility& visibility, double firstVisibleSample, double samplesPerPixel,
                             std::uint32_t widthPixels) {
+  const LaneCoverage coverage(reader.groups(), firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeLaneRow(reader, coverage, derived, row, visibility, firstVisibleSample, samplesPerPixel, widthPixels);
+}
+
+RowSummary summarizeLaneRow(AnnotationReader& reader, const LaneCoverage& coverage, const DerivedRows& derived,
+                            std::uint32_t row, const DecoderVisibility& visibility, double firstVisibleSample,
+                            double samplesPerPixel, std::uint32_t widthPixels) {
   const DerivedRowSource* s = derived.find(row);
-  if (s == nullptr) return summarizeRow(reader, row, visibility, firstVisibleSample, samplesPerPixel, widthPixels);
+  if (s == nullptr) {
+    return summarizeRow(reader, coverage, row, visibility, firstVisibleSample, samplesPerPixel, widthPixels);
+  }
   if (classHidden(visibility, row, s->cls)) return {};
-  return summarizeGroupsAs(reader, s->sourceGroups, s->cls, firstVisibleSample, samplesPerPixel, widthPixels);
+  return summarizeGroupsAs(reader, coverage, s->sourceGroups, s->cls, firstVisibleSample, samplesPerPixel,
+                           widthPixels);
 }
 
 std::optional<decode::Annotation> laneRowAnnotationAt(const AnnotationGroups& groups, const DerivedRows& derived,

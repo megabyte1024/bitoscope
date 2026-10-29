@@ -5,6 +5,7 @@
 #include "live_view.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace bitoscope::waveform_view {
@@ -17,7 +18,7 @@ bool followLiveEdge(Viewport& viewport, uint64_t previousTotal, uint64_t total) 
   const double width = static_cast<double>(viewport.widthPixels());
   const double previousPixel = viewport.sampleToPixel(static_cast<double>(previousTotal));
   const double newestPixel = viewport.sampleToPixel(static_cast<double>(total));
-  if (previousPixel < 0.0 || previousPixel > width || newestPixel <= width) return false;
+  if (previousPixel < 0.0 || std::round(previousPixel) > width || newestPixel <= width) return false;
   viewport.panPixels(newestPixel - width, (std::numeric_limits<uint64_t>::max)() / 4);
   return true;
 }

@@ -43,8 +43,6 @@ static_assert(offsetof(LaneConstants, row) == 108);
 static_assert(offsetof(LaneConstants, width) == 112);
 static_assert(sizeof(LaneConstants) == 116);
 
-constexpr std::uint32_t kMaxEdge = 8192;
-
 std::string failure(const char* what, VkResult result) {
   return std::format("Waveform pass: {} failed (VkResult {})", what, static_cast<int>(result));
 }
@@ -74,17 +72,7 @@ VulkanWaveformRenderer::~VulkanWaveformRenderer() {
   });
 }
 
-void VulkanWaveformRenderer::problem(std::string line) {
-  if (problems_.empty() || problems_.back() != line) {
-    problems_.push_back(std::move(line));
-  }
-}
-
-std::vector<std::string> VulkanWaveformRenderer::takeProblems() {
-  std::vector<std::string> out;
-  out.swap(problems_);
-  return out;
-}
+std::vector<std::string> VulkanWaveformRenderer::takeProblems() { return table_.takeProblems(); }
 
 bool VulkanWaveformRenderer::ensurePipeline() {
   if (pipelineTried_) {
@@ -104,7 +92,7 @@ bool VulkanWaveformRenderer::ensurePipeline() {
   setInfo.pBindings = &binding;
   if (const VkResult r = vkCreateDescriptorSetLayout(device, &setInfo, nullptr, &setLayout_);
       r != VK_SUCCESS) {
-    problem(failure("vkCreateDescriptorSetLayout", r));
+    table_.problem(failure("vkCreateDescriptorSetLayout", r));
     return false;
   }
   VkPushConstantRange push{};
@@ -119,7 +107,7 @@ bool VulkanWaveformRenderer::ensurePipeline() {
   layoutInfo.pPushConstantRanges = &push;
   if (const VkResult r = vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout_);
       r != VK_SUCCESS) {
-    problem(failure("vkCreatePipelineLayout", r));
+    table_.problem(failure("vkCreatePipelineLayout", r));
     return false;
   }
 
@@ -130,7 +118,7 @@ bool VulkanWaveformRenderer::ensurePipeline() {
     info.pCode = words.data();
     const VkResult r = vkCreateShaderModule(device, &info, nullptr, &out);
     if (r != VK_SUCCESS) {
-      problem(failure("vkCreateShaderModule", r));
+      table_.problem(failure("vkCreateShaderModule", r));
     }
     return r == VK_SUCCESS;
   };
@@ -203,7 +191,7 @@ bool VulkanWaveformRenderer::ensurePipeline() {
   if (modules) {
     created = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline_);
     if (created != VK_SUCCESS) {
-      problem(failure("vkCreateGraphicsPipelines", created));
+      table_.problem(failure("vkCreateGraphicsPipelines", created));
     }
   }
   if (vertex != VK_NULL_HANDLE) {
@@ -218,43 +206,30 @@ bool VulkanWaveformRenderer::ensurePipeline() {
 
 void VulkanWaveformRenderer::upload(std::uint64_t view, std::uint32_t width, std::uint32_t rows,
                                     std::span<const std::uint8_t> levels) {
-  View& v = views_[view];
-  const bool fits = width != 0 && rows != 0 && levels.size() == static_cast<std::size_t>(width) * rows;
-  if (!fits || width > kMaxEdge || rows > kMaxEdge) {
-    // WHY: Generation goes back to 0 too: keeping it made the next draw() sync a slot for a 0 x 0 view,
-    // which is invalid Vulkan usage.
-    releaseSlots(v);
-    v = View{};
-    if (fits) {
-      problem(std::format("Waveform pass: view of {} x {} columns and rows is larger than it "
-                          "may be ({})",
-                          width, rows, kMaxEdge));
-    }
+  const gui_waveform_frame::UploadChange change = table_.upload(view, width, rows, levels.size());
+  if (change == gui_waveform_frame::UploadChange::Rejected || change == gui_waveform_frame::UploadChange::TooLarge) {
+    release(view);
     return;
   }
-  if (v.width != width || v.rows != rows) {
+  View& v = views_[view];
+  if (change == gui_waveform_frame::UploadChange::Reshaped) {
     releaseSlots(v);
-    v.width = width;
-    v.rows = rows;
   }
   v.levels.assign(levels.begin(), levels.end());
-  ++v.generation;
 }
 
 bool VulkanWaveformRenderer::holds(std::uint64_t view, std::uint32_t width, std::uint32_t rows) const {
-  const auto it = views_.find(view);
-  return it != views_.end() && it->second.generation != 0 && it->second.width == width &&
-         it->second.rows == rows;
+  return table_.holds(view, width, rows);
 }
 
-bool VulkanWaveformRenderer::syncSlot(View& view, std::uint32_t slot) {
+bool VulkanWaveformRenderer::syncSlot(View& view, const gui_waveform_frame::ViewShape& shape, std::uint32_t slot) {
   SlotBuffer& s = view.slots[slot];
-  if (s.generation == view.generation && s.buffer != VK_NULL_HANDLE) {
+  if (s.generation == shape.generation && s.buffer != VK_NULL_HANDLE) {
     return true;
   }
   VkDevice device = vulkan_.device();
   if (s.buffer == VK_NULL_HANDLE) {
-    const VkDeviceSize bytes = (static_cast<VkDeviceSize>(view.width) * view.rows + 3) & ~VkDeviceSize{3};
+    const VkDeviceSize bytes = (static_cast<VkDeviceSize>(shape.width) * shape.rows + 3) & ~VkDeviceSize{3};
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = bytes;
@@ -262,7 +237,7 @@ bool VulkanWaveformRenderer::syncSlot(View& view, std::uint32_t slot) {
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (const VkResult r = vkCreateBuffer(device, &bufferInfo, nullptr, &s.buffer); r != VK_SUCCESS) {
       s.buffer = VK_NULL_HANDLE;
-      problem(failure("vkCreateBuffer (levels)", r));
+      table_.problem(failure("vkCreateBuffer (levels)", r));
       return false;
     }
     VkMemoryRequirements needs;
@@ -290,7 +265,7 @@ bool VulkanWaveformRenderer::syncSlot(View& view, std::uint32_t slot) {
       r = vkAllocateDescriptorSets(device, &setAlloc, &s.set);
     }
     if (r != VK_SUCCESS) {
-      problem(failure(type ? "levels' memory or descriptor set" : "host-visible memory type", r));
+      table_.problem(failure(type ? "levels' memory or descriptor set" : "host-visible memory type", r));
       if (s.memory != VK_NULL_HANDLE) {
         vkFreeMemory(device, s.memory, nullptr);
       }
@@ -309,7 +284,7 @@ bool VulkanWaveformRenderer::syncSlot(View& view, std::uint32_t slot) {
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
   }
   std::memcpy(s.mapped, view.levels.data(), view.levels.size());
-  s.generation = view.generation;
+  s.generation = shape.generation;
   return true;
 }
 
@@ -334,12 +309,13 @@ void VulkanWaveformRenderer::releaseSlots(View& view) {
 void VulkanWaveformRenderer::draw(ImDrawList* drawList, std::uint64_t view, float left,
                                   std::span<const Lane> lanes, float lineWidth) {
   const auto it = views_.find(view);
-  if (it == views_.end() || it->second.generation == 0 || lanes.empty() || !ensurePipeline()) {
+  const gui_waveform_frame::ViewShape* shape = table_.find(view);
+  if (it == views_.end() || shape == nullptr || lanes.empty() || !ensurePipeline()) {
     return;
   }
   View& v = it->second;
   const std::uint32_t slot = vulkan_.frameSlot();
-  if (!syncSlot(v, slot)) {
+  if (!syncSlot(v, *shape, slot)) {
     return;
   }
   v.left = left;
@@ -358,7 +334,8 @@ void VulkanWaveformRenderer::callback(const ImDrawList*, const ImDrawCmd* cmd) {
 
 void VulkanWaveformRenderer::render(const Payload& payload, const ImDrawCmd* cmd) {
   const auto it = views_.find(payload.view);
-  if (it == views_.end() || !pipelineReady_) {
+  const gui_waveform_frame::ViewShape* shape = table_.find(payload.view);
+  if (it == views_.end() || shape == nullptr || !pipelineReady_) {
     return;
   }
   const View& v = it->second;
@@ -398,13 +375,13 @@ void VulkanWaveformRenderer::render(const Payload& payload, const ImDrawCmd* cmd
   const float left = std::round((v.left - origin.x) * scale.x);
   const float lineWidth = (std::max)(1.0f, std::round(v.lineWidth * scale.y));
   for (const Lane& lane : v.lanes) {
-    if (lane.row >= v.rows) {
+    if (lane.row >= shape->rows) {
       continue;
     }
     LaneConstants c{};
     c.band[0] = left;
     c.band[1] = std::round((lane.top - origin.y) * scale.y);
-    c.band[2] = left + static_cast<float>(v.width);
+    c.band[2] = left + static_cast<float>(shape->width);
     c.band[3] = std::round((lane.bottom - origin.y) * scale.y);
     std::memcpy(c.highColor, lane.highColor.data(), sizeof(c.highColor));
     std::memcpy(c.lowColor, lane.lowColor.data(), sizeof(c.lowColor));
@@ -416,7 +393,7 @@ void VulkanWaveformRenderer::render(const Payload& payload, const ImDrawCmd* cmd
     c.display[1] = displayHeight;
     c.lineWidth = lineWidth;
     c.row = lane.row;
-    c.width = v.width;
+    c.width = shape->width;
     vkCmdPushConstants(commands, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(c), &c);
     vkCmdDraw(commands, 4, 1, 0, 0);
@@ -424,6 +401,7 @@ void VulkanWaveformRenderer::render(const Payload& payload, const ImDrawCmd* cmd
 }
 
 void VulkanWaveformRenderer::release(std::uint64_t view) {
+  table_.release(view);
   const auto it = views_.find(view);
   if (it != views_.end()) {
     releaseSlots(it->second);

@@ -207,7 +207,7 @@ msgid "All pre-trigger samples and at least {} samples after trigger ({}) fit ev
 msgstr ""
 
 #: gui/app/capture_panel.cpp
-msgid "At least {} samples ({}) fit even if nothing compresses; usually more fit."
+msgid "At least {} samples ({}) fit even if nothing compresses, unless memory is taken meanwhile; usually more fit."
 msgstr ""
 
 #: gui/app/capture_panel.cpp
@@ -1270,6 +1270,14 @@ msgid "Trigger on any edge"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
+msgid "Trim before"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "Trim after"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
 msgid "Zoom in (+)"
 msgstr ""
 
@@ -1303,6 +1311,10 @@ msgstr ""
 
 #: gui/app/waveform_panel.cpp
 msgid "decoding {}%"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "decoding starts when capture ends"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp
@@ -1351,6 +1363,10 @@ msgstr ""
 
 #: gui/app/waveform_panel.cpp
 msgid "Delete"
+msgstr ""
+
+#: gui/app/waveform_panel.cpp
+msgid "Delete all"
 msgstr ""
 
 #: gui/app/waveform_panel.cpp

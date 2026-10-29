@@ -734,6 +734,10 @@ std::expected<JobResult, JobError> DecoderPluginClient::runJob(const dec::JobSet
   // WHY: A failure the plugin reports on its own outranks a cancel; one after CANCEL or a failed ring answers the stop.
   const auto notWhole = [&]() -> std::optional<std::string> {
     if (job.out_of_memory || !ended || job.end.status != dec::DecodeStatus::completed) return std::nullopt;
+    if (ring && setup.facts.totalIsBound && job.end.samplesRead != delivered) {
+      return "decoder plugin says it read " + std::to_string(job.end.samplesRead) + " samples, but host delivered " +
+             std::to_string(delivered);
+    }
     if (job.received != job.end.annotationCount) {
       return "decoder plugin says it sent " + std::to_string(job.end.annotationCount) + " annotations, but " +
              std::to_string(job.received) + " arrived: annotations were lost";

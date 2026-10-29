@@ -204,6 +204,7 @@ struct CaptureFacts {
   uint64_t sampleRateMilliHz = 0;
   uint32_t channelCount = 0;
   uint64_t totalSamples = 0;
+  bool totalIsBound = false;
   bool operator==(const CaptureFacts&) const = default;
 };
 

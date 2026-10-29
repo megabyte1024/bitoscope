@@ -13,6 +13,7 @@
 #include <preferences_file.h>
 #include <window_placement.h>
 
+#include <frame_loop.h>
 #include <frame_pacer.h>
 
 #include <algorithm>
@@ -51,9 +52,9 @@ namespace {
 using bitoscope::gui::GuiApp;
 using bitoscope::gui::win32::D3d11Device;
 using bitoscope::gui::win32::Win32PlatformServices;
-using bitoscope::gui_frame_pacing::FrameDecision;
-using bitoscope::gui_frame_pacing::FramePacingInput;
-using bitoscope::gui_frame_pacing::WindowVisibility;
+using bitoscope::gui_frame_pacing::AppObservation;
+using bitoscope::gui_frame_pacing::FrameLoopHooks;
+using bitoscope::gui_frame_pacing::WindowObservation;
 
 constexpr wchar_t kWindowClass[] = L"bitoscope_gui";
 constexpr wchar_t kWindowTitle[] = L"bitoscope";
@@ -338,82 +339,109 @@ void renderVeiledFrame(HWND hwnd, WindowState& state, D3d11Device& d3d, GuiApp& 
 // thread posting during shutdown could hit a dead HWND.
 int runFrames(HWND hwnd, WindowState& state, D3d11Device& d3d, GuiApp& app, HANDLE wake) {
   state.renderDuringSizing = [&] { renderFrame(hwnd, state, d3d, app); };
-  bitoscope::gui_frame_pacing::FramePacer pacer;
-  for (;;) {
+  bool quit = false;
+  int quitCode = 0;
+  const auto testHookOn = [&state] {
+#ifdef BITOSCOPE_GUI_TEST_HOOK
+    return state.testHook != nullptr;
+#else
+    (void)state;
+    return false;
+#endif
+  };
+
+  FrameLoopHooks hooks;
+  hooks.handleEvents = [&] {
     MSG msg;
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
       if (msg.message == WM_QUIT) {
-        state.renderDuringSizing = nullptr;
-        return static_cast<int>(msg.wParam);
+        quit = true;
+        quitCode = static_cast<int>(msg.wParam);
+        return;
       }
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
-    if (!state.fatalError.empty()) {
-      state.renderDuringSizing = nullptr;
-      showError(hwnd, state.fatalError);
-      return 1;
+  };
+  hooks.closeRequested = [&] {
+    if (quit) {
+      return true;
     }
     if (state.closeRequested) {
       state.closeRequested = false;
       app.requestAppClose();
     }
-    if (state.forceClose || app.closeConfirmed()) {
-      state.renderDuringSizing = nullptr;
-      return 0;
-    }
-
+    return state.forceClose || app.closeConfirmed();
+  };
+  hooks.observeWindow = [&] {
+    WindowObservation observed;
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    observed.framebufferWidth = static_cast<int>(client.right - client.left);
+    observed.framebufferHeight = static_cast<int>(client.bottom - client.top);
     // WHY: Minimized is tested directly: a flip-model Present does not reliably report a minimized window as occluded.
-    WindowVisibility visibility = WindowVisibility::Visible;
-    bool testHookOn = false;
-#ifdef BITOSCOPE_GUI_TEST_HOOK
-    testHookOn = state.testHook != nullptr;
-#endif
-    if (testHookOn && !IsIconic(hwnd)) {
+    if (testHookOn() && !IsIconic(hwnd)) {
       state.occluded = false;
     } else if (IsIconic(hwnd)) {
       if (state.cloaked) {
         setCloaked(hwnd, false);
         state.cloaked = false;
       }
-      visibility = WindowVisibility::Minimized;
+      observed.iconified = true;
     } else if (state.occluded && d3d.stillOccluded()) {
-      visibility = WindowVisibility::Occluded;
+      observed.occluded = true;
     } else {
       state.occluded = false;
     }
-
-    const bool backgroundChanged = app.pumpBackground();
-
-    FramePacingInput input;
-    input.window = visibility;
-    input.reduceIdleFrameRate = app.reduceIdleFrameRate();
-    input.inputSeen = std::exchange(state.activity, false) || testHookOn;
-    input.backgroundChanged = backgroundChanged;
-    input.windowChanged = state.resizeWidth != 0 || state.resizeHeight != 0 || state.newDpiScale != 0 ||
-                          state.systemThemeChanged || state.cloaked;
-    input.captureRunning = app.captureRunning();
-    input.asyncWorkInFlight = app.asyncWorkInFlight();
-    input.uiNeedsMore = app.wantsMoreFrames();
-    const std::uint64_t nowMs = static_cast<std::uint64_t>(
+    observed.eventsHandled = std::exchange(state.activity, false);
+    observed.testHookBusy = testHookOn();
+    observed.changePending = state.resizeWidth != 0 || state.resizeHeight != 0 || state.newDpiScale != 0 ||
+                             state.systemThemeChanged || state.cloaked;
+    return observed;
+  };
+  hooks.pumpBackground = [&] {
+    AppObservation observed;
+    observed.backgroundChanged = app.pumpBackground();
+    observed.captureRunning = app.captureRunning();
+    observed.captureAdvanced = app.captureAdvanced();
+    observed.asyncWorkInFlight = app.asyncWorkInFlight();
+    observed.uiNeedsMore = app.wantsMoreFrames();
+    observed.reduceIdleFrameRate = app.reduceIdleFrameRate();
+    return observed;
+  };
+  std::string shownTitle = "bitoscope";
+  hooks.drawFrame = [&] {
+    const auto frameStart = std::chrono::steady_clock::now();
+    renderFrame(hwnd, state, d3d, app);
+    if (std::string title = app.windowTitle("bitoscope"); title != shownTitle) {
+      SetWindowTextA(hwnd, title.c_str());
+      shownTitle = std::move(title);
+    }
+    if (testHookOn() && d3d.syncInterval() == 0) {
+      const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - frameStart);
+      if (spent < std::chrono::milliseconds(16)) {
+        Sleep(static_cast<DWORD>((std::chrono::milliseconds(16) - spent).count()));
+      }
+    }
+  };
+  hooks.failed = [&state] { return !state.fatalError.empty(); };
+  hooks.wait = [wake](std::uint32_t timeoutMs) {
+    MsgWaitForMultipleObjectsEx(1, &wake, timeoutMs, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+  };
+  hooks.nowMs = [] {
+    return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
-    const FrameDecision decision = pacer.decide(input, nowMs);
+  };
 
-    if (decision.render) {
-      const auto frameStart = std::chrono::steady_clock::now();
-      renderFrame(hwnd, state, d3d, app);
-      pacer.frameRendered();
-      if (testHookOn && d3d.syncInterval() == 0) {
-        const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - frameStart);
-        if (spent < std::chrono::milliseconds(16)) {
-          Sleep(static_cast<DWORD>((std::chrono::milliseconds(16) - spent).count()));
-        }
-      }
-      continue;
-    }
-    MsgWaitForMultipleObjectsEx(1, &wake, decision.waitTimeoutMs, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+  bitoscope::gui_frame_pacing::FramePacer pacer;
+  const int exitCode = bitoscope::gui_frame_pacing::runFrameLoop(hooks, pacer);
+  state.renderDuringSizing = nullptr;
+  if (exitCode != 0) {
+    showError(hwnd, state.fatalError);
+    return exitCode;
   }
+  return quit ? quitCode : 0;
 }
 
 }

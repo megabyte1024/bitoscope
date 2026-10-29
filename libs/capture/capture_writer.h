@@ -105,6 +105,7 @@ struct CaptureMetadata {
   std::optional<uint64_t> requested_post_trigger_samples;
   std::optional<MemoryShortfall> memory_shortfall;
   CaptureExtent extent;
+  bool trimmed = false;
   std::string device;
   std::vector<SavedProperty> device_properties;
   std::optional<ViewState> view;
@@ -199,7 +200,7 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
     }
   }
 
-  if (buffer.sampleCount() > extent_end) {
+  if (!metadata.trimmed && buffer.sampleCount() > extent_end) {
     const std::span<const IndexRecord> records = buffer.indexRange(0, buffer.sampleCount());
     const bool inside_last_window =
         triggered && !records.empty() && records.back().first_sample_index < extent_end;
@@ -217,19 +218,19 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
     }
   }
 
-  if (!triggered && extent.first_sample != 0) {
+  if (!metadata.trimmed && !triggered && extent.first_sample != 0) {
     return std::unexpected(std::format(
         "capture's extent starts at sample {}, not 0, for untriggered capture",
         extent.first_sample));
   }
-  if (triggered && extent.first_sample >= plan.samplesPerWindow()) {
+  if (!metadata.trimmed && triggered && extent.first_sample >= plan.samplesPerWindow()) {
     return std::unexpected(std::format(
         "capture's extent starts at sample {}, which is not less than {}-sample window "
         "triggered capture's front offset is always inside",
         buffer.describeSample(extent.first_sample), plan.samplesPerWindow()));
   }
 
-  if (!triggered && requested != plan.totalSamples()) {
+  if (!metadata.trimmed && !triggered && requested != plan.totalSamples()) {
     return std::unexpected(std::format(
         "capture is recorded as having asked for {} samples, but its plan asked for {}",
         requested, plan.totalSamples()));
@@ -239,7 +240,7 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
         "capture's extent overflows: first_sample {} + requested {} does not fit in 64 bits",
         extent.first_sample, requested));
   }
-  if (triggered && extent.first_sample + requested > plan.totalSamples()) {
+  if (!metadata.trimmed && triggered && extent.first_sample + requested > plan.totalSamples()) {
     return std::unexpected(std::format(
         "capture is recorded as having asked for {} samples from its front offset {}, "
         "which reaches past plan's {} samples",
@@ -247,6 +248,10 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
   }
 
   const uint64_t total = extent_end;
+  if (metadata.trimmed && metadata.memory_shortfall.has_value()) {
+    return std::unexpected(
+        "capture is trimmed, so it holds all it records as asked for, but it records being cut short");
+  }
   if (const std::optional<MemoryShortfall>& s = metadata.memory_shortfall; s.has_value()) {
     if (s->requested_samples != requested) {
       return std::unexpected(std::format(
@@ -329,24 +334,10 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
             : std::format("capture holds {} samples, more than {} it asked for",
                           extent.count, requested));
   }
-  uint64_t expected_first = 0;
-  for (const IndexRecord& r : buffer.indexRange(0, buffer.sampleCount())) {
-    if (r.first_sample_index != expected_first) {
-      return std::unexpected(std::format(
-          "capture has hole at sample {}: {} samples are missing", expected_first,
-          r.first_sample_index > expected_first ? r.first_sample_index - expected_first
-                                                : expected_first - r.first_sample_index));
-    }
-    if (const uint64_t lost = r.gap_samples_before; lost != 0) {
-      return std::unexpected(std::format(
-          "window at sample {} reports {} samples lost before it", r.first_sample_index, lost));
-    }
-    expected_first = r.endSample();
-  }
-  if (expected_first < total) {
-    return std::unexpected(std::format(
-        "capture holds {} of {} samples; last {} are missing, from sample {}",
-        expected_first, total, total - (std::min)(expected_first, total), expected_first));
+  const uint64_t stored_end = buffer.sampleCount();
+  if (stored_end < total) {
+    return std::unexpected(std::format("capture holds {} of {} samples; last {} are missing, from sample {}",
+                                       stored_end, total, total - stored_end, stored_end));
   }
 
   if (!metadata.decoder_presentation.empty() &&
@@ -362,79 +353,5 @@ inline std::expected<void, std::string> checkSavable(const RawCaptureBuffer& buf
   }
   return {};
 }
-
-struct SavedCapture {
-  uint64_t sample_rate_milli_hz = 0;
-  uint64_t total_samples = 0;
-  std::vector<SavedChannel> channels;
-  std::vector<std::vector<uint8_t>> channel_bytes;
-  std::vector<std::pair<std::string, std::string>> decoder_setup;
-  std::vector<DecoderVersions> decoder_versions;
-  uint64_t capture_id = 0;
-  std::string device;
-  std::vector<SavedProperty> device_properties;
-  std::optional<uint64_t> origin_sample_index;
-  std::optional<uint64_t> trigger_sample_index;
-  uint64_t requested_samples = 0;
-  std::optional<uint64_t> requested_pre_trigger_samples;
-  std::optional<uint64_t> requested_post_trigger_samples;
-  std::optional<MemoryShortfall> memory_shortfall;
-};
-
-class InMemoryCaptureWriter final : public CaptureWriter {
- public:
-  std::expected<void, std::string> write(const RawCaptureBuffer& buffer,
-                                         const CaptureMetadata& metadata) override {
-    ++write_calls_;
-    if (fail_next_) {
-      std::string message = std::move(*fail_next_);
-      fail_next_.reset();
-      return std::unexpected(std::move(message));
-    }
-    if (auto ok = checkSavable(buffer, metadata); !ok) return std::unexpected(ok.error());
-
-    const CapturePlan& plan = buffer.plan();
-    SavedCapture out;
-    out.sample_rate_milli_hz = plan.sampleRateMilliHz();
-    out.total_samples = metadata.extent.count;
-    out.channels = metadata.channels;
-    out.decoder_setup = metadata.decoder_setup;
-    out.decoder_versions = metadata.decoder_versions;
-    out.capture_id = metadata.capture_id;
-    out.device = metadata.device;
-    out.device_properties = metadata.device_properties;
-    out.origin_sample_index = metadata.origin_sample_index;
-    out.trigger_sample_index = metadata.trigger_sample_index;
-    out.requested_samples = metadata.requested_samples;
-    out.requested_pre_trigger_samples = metadata.requested_pre_trigger_samples;
-    out.requested_post_trigger_samples = metadata.requested_post_trigger_samples;
-    out.memory_shortfall = metadata.memory_shortfall;
-    const uint64_t stored_bytes = (out.total_samples + 7) / 8;
-    try {
-      out.channel_bytes.resize(plan.channels());
-      for (uint32_t c = 0; c < plan.channels(); ++c) {
-        out.channel_bytes[c].resize(static_cast<size_t>(stored_bytes));
-        if (auto r = readSamples(buffer, c, metadata.extent.first_sample, metadata.extent.count,
-                                 out.channel_bytes[c]);
-            !r) {
-          return std::unexpected(std::format("reading channel {}: {}", c, r.error()));
-        }
-      }
-    } catch (const std::bad_alloc&) {
-      return std::unexpected("out of memory copying capture");
-    }
-    saved_ = std::move(out);
-    return {};
-  }
-
-  void failNext(std::string message) { fail_next_ = std::move(message); }
-  const SavedCapture* saved() const { return saved_ ? &*saved_ : nullptr; }
-  uint32_t writeCalls() const { return write_calls_; }
-
- private:
-  std::optional<SavedCapture> saved_;
-  std::optional<std::string> fail_next_;
-  uint32_t write_calls_ = 0;
-};
 
 }

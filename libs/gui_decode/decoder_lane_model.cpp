@@ -4,6 +4,7 @@
 
 #include "decoder_lane_model.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "decoder_labels.h"
@@ -42,6 +43,16 @@ void DecoderLaneLabelCache::refresh(std::span<const DecoderConfig> configs, cons
   ++builds_;
 }
 
+namespace {
+
+bool derivedRowOf(const std::vector<decode::RowSource>& rowSources, std::uint32_t row) {
+  return std::ranges::any_of(rowSources, [row](const decode::RowSource& source) {
+    return source.row == row && decode::derivesAnnotations(source);
+  });
+}
+
+}
+
 DecoderLaneModel decoderLaneModel(const DecoderLaneModelInput& input) {
   const AnnotationStore& store = *input.store;
   const std::size_t d = input.index;
@@ -55,6 +66,11 @@ DecoderLaneModel decoderLaneModel(const DecoderLaneModelInput& input) {
   const DecodedAnnotations* decoded = shown != nullptr ? shown->annotations.get() : nullptr;
   lane.rows = wv::shownDecoderRows(input.labels->declared,
                                    decoded != nullptr ? decoded->groups().rowIds() : std::span<const std::uint32_t>{});
+  if (!input.showDerived) {
+    std::erase_if(lane.rows, [&](const decode::AnnotationRow& row) {
+      return derivedRowOf(input.labels->rowSources, row.id);
+    });
+  }
   if (shown != nullptr) lane.derivation = laneDerivation(*shown, input.capture, input.showDerived);
   lane.visibility = laneVisibility(lane.derivation);
   for (const decode::AnnotationRow& row : lane.rows) {

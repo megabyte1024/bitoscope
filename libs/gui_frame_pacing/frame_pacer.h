@@ -21,6 +21,10 @@ struct FramePacingPolicy {
   std::uint32_t asyncPollMs = 50;
   std::uint32_t occludedPollMs = 100;
   std::uint32_t minimizedTimeoutMs = 1000;
+  std::uint32_t captureFramesPerSecond = 60;
+  std::uint32_t captureRepaintMs = 100;
+  std::uint32_t captureSettleMs = 0;
+  std::uint32_t captureEarlyToleranceMs = 2;
 };
 
 struct FramePacingInput {
@@ -30,6 +34,7 @@ struct FramePacingInput {
   bool backgroundChanged = false;
   bool windowChanged = false;
   bool captureRunning = false;
+  bool captureAdvanced = false;
   bool asyncWorkInFlight = false;
   bool uiNeedsMore = false;
 };
@@ -54,6 +59,10 @@ class FramePacer {
   std::uint64_t lastActivityMs_ = 0;
   std::uint32_t framesSinceActivity_ = 0;
   WindowVisibility previous_ = WindowVisibility::Minimized;
+  bool haveRendered_ = false;
+  std::uint64_t lastRenderMs_ = 0;
+  bool haveSchedule_ = false;
+  std::uint64_t nextFrameUs_ = 0;
 };
 
 }

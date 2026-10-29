@@ -34,6 +34,10 @@ class MarkerList {
 
   bool remove(MarkerId id);
 
+  bool removeAll();
+
+  bool trim(std::uint64_t first, std::uint64_t count);
+
   bool empty() const { return markers_.empty(); }
   std::size_t size() const { return markers_.size(); }
 

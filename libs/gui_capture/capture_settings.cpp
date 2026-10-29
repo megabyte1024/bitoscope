@@ -9,6 +9,7 @@
 
 #include "capture_plan.h"
 #include "ring_config.h"
+#include "trigger_split.h"
 #include "triggered_window.h"
 
 namespace bitoscope::gui_capture {
@@ -95,10 +96,9 @@ std::expected<TriggerRange, std::string> triggerRange(uint64_t lengthSamples, ui
     return std::unexpected("pre-trigger ratio " + std::to_string(preTriggerPercent) + " is outside 0-100");
   }
   if (lengthSamples == 0) return std::unexpected("capture of zero samples has nothing to trigger in");
-  // WHY: Compute floor(L * ratio / 100) as L = 100 q + r so that L * ratio cannot overflow.
-  const uint64_t pre = lengthSamples / 100 * preTriggerPercent + lengthSamples % 100 * preTriggerPercent / 100;
-  if (pre == lengthSamples) return TriggerRange{lengthSamples - 1, 1};
-  return TriggerRange{pre, lengthSamples - pre};
+  const bitoscope::trigger::PrePostSplit split = bitoscope::trigger::splitPreTrigger(
+      lengthSamples, bitoscope::trigger::preTriggerSamplesForRatio(lengthSamples, preTriggerPercent));
+  return TriggerRange{split.pre, split.post};
 }
 
 std::expected<CaptureRequest, SettingsProblem> buildCaptureRequest(

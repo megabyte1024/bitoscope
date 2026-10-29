@@ -7,7 +7,7 @@ add_library(bitoscope_decoders_lowlevel STATIC
     native_uart.cpp
 )
 target_include_directories(bitoscope_decoders_lowlevel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(bitoscope_decoders_lowlevel PUBLIC bitoscope_decoder_c_sdk bitoscope_decoders_common)
+target_link_libraries(bitoscope_decoders_lowlevel PUBLIC bitoscope_decoder_c_sdk)
 target_compile_features(bitoscope_decoders_lowlevel PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_decoders_lowlevel)
 

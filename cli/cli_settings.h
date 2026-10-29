@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <expected>
 #include <map>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,8 @@
 namespace bitoscope::cli {
 
 std::expected<std::vector<ipc::props::PropertyValue>, std::string> readAnalyzerSettings(
-    const std::map<std::string, std::string>& settings, const host::pipe::PluginDevice& session);
+    const std::map<std::string, std::string>& settings, const host::pipe::PluginDevice& session,
+    std::ostream* notes = nullptr);
 
 std::string describeAnalyzerSettings(const std::vector<ipc::props::PropertyValue>& values,
                                      const host::pipe::PluginDevice& session);

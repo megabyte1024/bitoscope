@@ -27,24 +27,64 @@ FrameDecision FramePacer::decide(const FramePacingInput& input, std::uint64_t no
   const bool restored = previous_ != WindowVisibility::Visible;
   previous_ = WindowVisibility::Visible;
 
+  const bool capture = input.captureRunning && policy_.captureFramesPerSecond != 0;
+  if (!capture) {
+    haveSchedule_ = false;
+  }
+
   if (!input.reduceIdleFrameRate) {
     decision.render = true;
-    return decision;
+  } else {
+    const bool activity = restored || !haveActivity_ || input.inputSeen || input.backgroundChanged ||
+                          input.windowChanged || input.captureAdvanced || input.uiNeedsMore;
+    if (activity) {
+      haveActivity_ = true;
+      lastActivityMs_ = nowMs;
+      framesSinceActivity_ = 0;
+    }
+    const std::uint64_t sinceMs = nowMs > lastActivityMs_ ? nowMs - lastActivityMs_ : 0;
+    const std::uint32_t settleMs = capture ? policy_.captureSettleMs : policy_.settleMs;
+    const bool settling = sinceMs < settleMs || framesSinceActivity_ < policy_.settleFrames;
+    const std::uint64_t renderedAgoMs = nowMs > lastRenderMs_ ? nowMs - lastRenderMs_ : 0;
+    const bool repaintDue = capture && (!haveRendered_ || renderedAgoMs >= policy_.captureRepaintMs);
+
+    decision.render = activity || settling || repaintDue;
+    if (!decision.render) {
+      if (capture) {
+        decision.waitTimeoutMs = static_cast<std::uint32_t>(policy_.captureRepaintMs - renderedAgoMs);
+      } else {
+        decision.waitTimeoutMs = policy_.idleTimeoutMs;
+      }
+      if (input.asyncWorkInFlight) {
+        decision.waitTimeoutMs = capture ? (std::min)(decision.waitTimeoutMs, policy_.asyncPollMs)
+                                         : policy_.asyncPollMs;
+      }
+    }
   }
 
-  const bool activity = restored || !haveActivity_ || input.inputSeen || input.backgroundChanged ||
-                        input.windowChanged || input.captureRunning || input.uiNeedsMore;
-  if (activity) {
-    haveActivity_ = true;
-    lastActivityMs_ = nowMs;
-    framesSinceActivity_ = 0;
+  if (decision.render && capture) {
+    const std::uint64_t intervalUs = 1000000 / policy_.captureFramesPerSecond;
+    const std::uint64_t nowUs = nowMs * 1000;
+    const std::uint64_t earliestUs = nextFrameUs_ > policy_.captureEarlyToleranceMs * 1000ULL
+                                       ? nextFrameUs_ - policy_.captureEarlyToleranceMs * 1000ULL
+                                       : 0;
+    if (haveSchedule_ && nowUs < earliestUs) {
+      decision.render = false;
+      const std::uint64_t waitUs = nextFrameUs_ - nowUs;
+      decision.waitTimeoutMs = static_cast<std::uint32_t>((waitUs + 999) / 1000);
+      if (input.asyncWorkInFlight) {
+        decision.waitTimeoutMs = (std::min)(decision.waitTimeoutMs, policy_.asyncPollMs);
+      }
+    } else if (!haveSchedule_ || nowUs >= nextFrameUs_ + intervalUs) {
+      haveSchedule_ = true;
+      nextFrameUs_ = nowUs + intervalUs;
+    } else {
+      nextFrameUs_ += intervalUs;
+    }
   }
-  const std::uint64_t sinceMs = nowMs > lastActivityMs_ ? nowMs - lastActivityMs_ : 0;
-  const bool settling = sinceMs < policy_.settleMs || framesSinceActivity_ < policy_.settleFrames;
-
-  decision.render = activity || settling;
-  if (!decision.render) {
-    decision.waitTimeoutMs = input.asyncWorkInFlight ? policy_.asyncPollMs : policy_.idleTimeoutMs;
+  if (decision.render) {
+    haveRendered_ = true;
+    lastRenderMs_ = nowMs;
   }
   return decision;
 }

@@ -64,18 +64,28 @@ std::optional<uint64_t> blockWith(const WaveformSource& source, uint32_t channel
   return low;
 }
 
+struct OpenSides {
+  bool before = false;
+  bool after = false;
+};
+
 std::optional<Candidate> blockCandidate(const WaveformSource& source, uint32_t channel,
                                         const BlockGrid& grid, uint64_t firstBegin, uint64_t firstEnd,
-                                        uint64_t lastBegin, uint64_t lastEnd, uint64_t total) {
-  const uint64_t beforeEnd = grid.lastBlockEndBy(firstBegin);
-  if (beforeEnd < grid.samples) return std::nullopt;
-  const uint64_t afterBegin = grid.firstBlockFrom(lastEnd);
-  if (afterBegin + grid.samples > total) return std::nullopt;
-  const std::optional<bool> before =
-    flatBlockLevel(source, channel, beforeEnd - grid.samples, beforeEnd);
-  const std::optional<bool> after =
-    flatBlockLevel(source, channel, afterBegin, afterBegin + grid.samples);
-  if (!before.has_value() || !after.has_value()) return std::nullopt;
+                                        uint64_t lastBegin, uint64_t lastEnd, uint64_t total, OpenSides open) {
+  std::optional<bool> before;
+  std::optional<bool> after;
+  if (!open.before) {
+    const uint64_t beforeEnd = grid.lastBlockEndBy(firstBegin);
+    if (beforeEnd < grid.samples) return std::nullopt;
+    before = flatBlockLevel(source, channel, beforeEnd - grid.samples, beforeEnd);
+    if (!before.has_value()) return std::nullopt;
+  }
+  if (!open.after) {
+    const uint64_t afterBegin = grid.firstBlockFrom(lastEnd);
+    if (afterBegin + grid.samples > total) return std::nullopt;
+    after = flatBlockLevel(source, channel, afterBegin, afterBegin + grid.samples);
+    if (!after.has_value()) return std::nullopt;
+  }
 
   // WHY: Search starts at the block HOLDING the column's first sample: an end can lie in the block straddling the
   // column start.
@@ -90,11 +100,11 @@ std::optional<Candidate> blockCandidate(const WaveformSource& source, uint32_t c
   const uint64_t lastRangeEnd = (std::min)(*lastTo + grid.samples, total);
   constexpr bool findFirstBlock = false;
   constexpr bool findLastBlock = true;
-  const std::optional<uint64_t> begin =
-    blockWith(source, channel, grid, *firstFrom, firstRangeEnd, !*before, findFirstBlock);
+  std::optional<uint64_t> begin = firstFrom;
+  if (before.has_value()) begin = blockWith(source, channel, grid, *firstFrom, firstRangeEnd, !*before, findFirstBlock);
   if (!begin.has_value()) return std::nullopt;
-  const std::optional<uint64_t> endBlock =
-    blockWith(source, channel, grid, *lastFrom, lastRangeEnd, !*after, findLastBlock);
+  std::optional<uint64_t> endBlock = lastTo;
+  if (after.has_value()) endBlock = blockWith(source, channel, grid, *lastFrom, lastRangeEnd, !*after, findLastBlock);
   if (!endBlock.has_value()) return std::nullopt;
   const uint64_t end = (std::min)(*endBlock + grid.samples, total);
   if (end <= *begin) return std::nullopt;
@@ -102,9 +112,11 @@ std::optional<Candidate> blockCandidate(const WaveformSource& source, uint32_t c
   Candidate out;
   out.beginSample = *begin;
   out.endSample = end;
-  out.levelBefore = *before;
-  out.levelAfter = *after;
+  out.levelBefore = before.value_or(after.value_or(false));
+  out.levelAfter = after.value_or(out.levelBefore);
   out.levelsKnown = true;
+  out.openBefore = open.before;
+  out.openAfter = open.after;
   return out;
 }
 
@@ -145,18 +157,42 @@ std::optional<RowScan> rowScanOf(const WaveformSource& source, uint32_t channel,
   return scan;
 }
 
+bool isFlat(uint8_t column) {
+  return column == static_cast<uint8_t>(ColumnLevel::Low) || column == static_cast<uint8_t>(ColumnLevel::High);
+}
+
+Candidate boundaryEdge(const RowScan& scan, uint64_t edge, uint32_t column, bool before, bool after) {
+  Candidate out{edge, edge, column, column, before, after, true, false, false};
+  if (!scan.fromBlocks) return out;
+  const std::optional<uint64_t> holding = scan.grid.blockHolding(edge);
+  const std::optional<uint64_t> previous = scan.grid.blockHolding(edge - 1);
+  if (!holding.has_value() || !previous.has_value()) return out;
+  out.beginSample = *holding;
+  out.endSample = (std::min)(*previous + scan.grid.samples, scan.total);
+  return out;
+}
+
 void probeRuns(const WaveformSource& source, uint32_t channel, const Viewport& viewport, const RowScan& scan,
                std::span<const uint8_t> columns, uint32_t firstChangedColumn, std::vector<Candidate>& candidates) {
   const uint32_t width = scan.width;
   const uint64_t total = scan.total;
   const BlockGrid& grid = scan.grid;
   const auto transition = static_cast<uint8_t>(ColumnLevel::Transition);
-  const auto noData = static_cast<uint8_t>(ColumnLevel::NoData);
   const auto sampleAt = [&](uint32_t column) {
     return static_cast<int64_t>(std::floor(viewport.pixelToSample(static_cast<double>(column))));
   };
   for (uint32_t j = 0; j < width;) {
     if (columns[j] != transition) {
+      // WHY: Flat neighbours of two levels hide an edge on their boundary; skipped, regions split with scroll.
+      if (j > 0 && j + 1 >= firstChangedColumn && isFlat(columns[j]) && isFlat(columns[j - 1]) &&
+          columns[j] != columns[j - 1]) {
+        const int64_t edge = sampleAt(j);
+        if (edge > 0 && static_cast<uint64_t>(edge) < total) {
+          const auto high = static_cast<uint8_t>(ColumnLevel::High);
+          candidates.push_back(
+            boundaryEdge(scan, static_cast<uint64_t>(edge), j, columns[j - 1] == high, columns[j] == high));
+        }
+      }
       ++j;
       continue;
     }
@@ -166,17 +202,16 @@ void probeRuns(const WaveformSource& source, uint32_t channel, const Viewport& v
     j = last + 1;
     // WHY: A run whose NEXT column precedes the first changed one probes as before, so its kept probe stands.
     if (last + 1 < firstChangedColumn) continue;
-    if (first == 0 || last + 1 >= width) continue;
-    if (columns[first - 1] == noData || columns[last + 1] == noData) continue;
-    const int64_t rawBegin = sampleAt(first);
+    const int64_t rawBegin = (std::max)(sampleAt(first), int64_t{0});
     const int64_t rawEnd = sampleAt(last + 1);
-    if (rawBegin < 0 || rawEnd <= rawBegin) continue;
+    if (rawEnd <= rawBegin) continue;
 
     // WHY: Every run is probed, even one column: skipping lone runs drew one column at some scroll offsets and three
     // at others.
     const auto runBegin = static_cast<uint64_t>(rawBegin);
     const uint64_t runEnd = (std::min)(static_cast<uint64_t>(rawEnd), total);
     if (runEnd <= runBegin + 1) continue;
+    const OpenSides open{first == 0 && runBegin > 0, last + 1 >= width && runEnd < total};
 
     if (scan.fromBlocks) {
       const int64_t firstEnd = sampleAt(first + 1);
@@ -184,7 +219,7 @@ void probeRuns(const WaveformSource& source, uint32_t channel, const Viewport& v
       if (firstEnd > rawBegin && lastBegin >= rawBegin) {
         std::optional<Candidate> found = blockCandidate(
           source, channel, grid, runBegin, (std::min)(static_cast<uint64_t>(firstEnd), total),
-          static_cast<uint64_t>(lastBegin), runEnd, total);
+          static_cast<uint64_t>(lastBegin), runEnd, total, open);
         if (found.has_value()) {
           found->firstColumn = first;
           found->lastColumn = last;
@@ -200,7 +235,7 @@ void probeRuns(const WaveformSource& source, uint32_t channel, const Viewport& v
     if (!firstEdge.has_value() || *firstEdge >= runEnd) continue;
     const std::optional<uint64_t> lastEdge = source.previousEdge(channel, runEnd);
     if (!lastEdge.has_value() || *lastEdge < *firstEdge) continue;
-    candidates.push_back(Candidate{*firstEdge, *lastEdge, first, last, false, false, false});
+    candidates.push_back(Candidate{*firstEdge, *lastEdge, first, last, false, false, false, open.before, open.after});
   }
 }
 
@@ -220,6 +255,7 @@ void spansOfCandidates(const WaveformSource& source, uint32_t channel, const Vie
       back.lastColumn = candidate.lastColumn;
       back.levelAfter = candidate.levelAfter;
       back.levelsKnown = back.levelsKnown && candidate.levelsKnown;
+      back.openAfter = candidate.openAfter;
       continue;
     }
     regions.push_back(Region{candidate, i});
@@ -236,6 +272,8 @@ void spansOfCandidates(const WaveformSource& source, uint32_t channel, const Vie
     span.samplesPerColumn = scan.perColumn;
     span.firstColumn = region.firstColumn;
     span.lastColumn = region.lastColumn;
+    span.openBefore = region.openBefore;
+    span.openAfter = region.openAfter;
     if (region.levelsKnown) {
       span.levelBefore = region.levelBefore;
       span.levelAfter = region.levelAfter;
@@ -323,6 +361,14 @@ uint32_t denseSpanWidthColumns(uint64_t lengthSamples, double samplesPerColumn) 
 DenseSpanPaint denseSpanPaint(const DenseSpan& span, uint32_t widthColumns) {
   DenseSpanPaint paint;
   if (widthColumns == 0 || span.endSample <= span.beginSample) return paint;
+
+  if (span.openBefore || span.openAfter) {
+    const uint32_t last = (std::min)(span.lastColumn, widthColumns - 1);
+    if (last < span.firstColumn) return paint;
+    paint.parts[0] = DenseSpanInk{span.firstColumn, last, 1.0};
+    paint.count = 1;
+    return paint;
+  }
 
   const auto columns =
     static_cast<int64_t>(denseSpanWidthColumns(span.endSample - span.beginSample, span.samplesPerColumn));

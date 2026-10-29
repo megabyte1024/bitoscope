@@ -57,14 +57,37 @@ std::expected<void, FeedError> writeSkip(host::DecodeRingProducer& ring, uint32_
   }
 }
 
+class StoredCapture final : public GrowingCapture {
+ public:
+  StoredCapture(const capture::RawCaptureBuffer& buffer, capture::CaptureExtent extent)
+      : buffer_(buffer), extent_(extent) {}
+
+  const capture::CapturePlan& plan() const override { return buffer_.plan(); }
+  bool hasPyramid() const override { return buffer_.hasPyramid(); }
+  capture::CaptureExtent publishedExtent() const override { return extent_; }
+  std::span<const capture::IndexRecord> indexRange(uint64_t first, uint64_t end) const override {
+    return buffer_.indexRange(first, end);
+  }
+  std::expected<void, std::string> read(uint32_t channel, uint64_t first_byte, std::span<uint8_t> out) const override {
+    return buffer_.read(channel, first_byte, out);
+  }
+  std::expected<void, std::string> pyramidSummary(uint32_t channel, uint64_t begin, uint64_t end,
+                                                  std::span<capture::Bucket> out) const override {
+    return buffer_.pyramidSummary(channel, begin, end, out);
+  }
+
+ private:
+  const capture::RawCaptureBuffer& buffer_;
+  capture::CaptureExtent extent_;
+};
+
 class FlatBuckets {
  public:
   static constexpr uint64_t kBatch = 4096;
 
-  FlatBuckets(const capture::RawCaptureBuffer& buffer, const std::vector<uint32_t>& channels, uint64_t first, uint64_t end,
-              uint64_t min_buckets)
-      : buffer_(buffer), channels_(channels), first_(first), end_(end), min_buckets_(min_buckets) {
-    usable_ = min_buckets_ > 0 && buffer.hasPyramid() && first_ < end_;
+  FlatBuckets(const GrowingCapture& capture, const std::vector<uint32_t>& channels, uint64_t first, uint64_t min_buckets)
+      : capture_(capture), channels_(channels), first_(first), end_(first), min_buckets_(min_buckets) {
+    usable_ = min_buckets_ > 0 && capture.hasPyramid();
   }
 
   void allocate() {
@@ -75,6 +98,8 @@ class FlatBuckets {
 
   bool usable() const { return usable_; }
   uint64_t minBuckets() const { return min_buckets_; }
+
+  void reach(uint64_t end) { end_ = (std::max)(end_, end); }
 
   std::optional<uint32_t> levels(uint64_t b) {
     if (!usable_ || b < first_ || b >= end_) return std::nullopt;
@@ -113,7 +138,7 @@ class FlatBuckets {
     const std::span<capture::Bucket> columns(columns_.data(), static_cast<size_t>(cache_count_));
     std::fill(cache_.begin(), cache_.begin() + static_cast<ptrdiff_t>(cache_count_), int64_t{0});
     for (size_t i = 0; i < channels_.size(); ++i) {
-      if (!buffer_.pyramidSummary(channels_[i], b * kBucket, (b + cache_count_) * kBucket, columns)) {
+      if (!capture_.pyramidSummary(channels_[i], b * kBucket, (b + cache_count_) * kBucket, columns)) {
         std::fill(cache_.begin(), cache_.begin() + static_cast<ptrdiff_t>(cache_count_), int64_t{-1});
         return;
       }
@@ -130,7 +155,7 @@ class FlatBuckets {
     }
   }
 
-  const capture::RawCaptureBuffer& buffer_;
+  const GrowingCapture& capture_;
   const std::vector<uint32_t>& channels_;
   uint64_t first_;
   uint64_t end_;
@@ -144,69 +169,138 @@ class FlatBuckets {
   uint64_t last_run_length_ = 0;
 };
 
-std::expected<void, FeedError> feedCapture(const capture::RawCaptureBuffer& buffer, capture::CaptureExtent extent,
+class WindowFeed {
+ public:
+  WindowFeed(const GrowingCapture& capture, const std::vector<uint32_t>& channels, const CaptureFeedOptions& options,
+             uint64_t first)
+      : capture_(capture),
+        channels_(channels),
+        options_(options),
+        flats_(capture, channels, (first + kBucket - 1) / kBucket, (options.min_skip_samples + kBucket - 1) / kBucket),
+        pos_(first) {}
+
+  std::expected<void, FeedError> allocate() {
+    const auto bound = static_cast<uint32_t>(channels_.size());
+    const uint64_t window_bytes = (uint64_t{capture_.plan().samplesPerWindow()} + 7) / 8;
+    try {
+      if (options_.before_allocate) options_.before_allocate(AllocationSite::FeedPlanes, window_bytes * bound);
+      planes_.assign(bound, std::vector<uint8_t>(static_cast<size_t>(window_bytes)));
+      for (const auto& p : planes_) spans_.emplace_back(p);
+      flats_.allocate();
+    } catch (const std::bad_alloc&) {
+      return feedError(FeedFailure::OutOfMemory, "out of memory for samples of " + std::to_string(bound) +
+                                                     " bound channels (" + std::to_string(window_bytes * bound) +
+                                                     " bytes window)");
+    }
+    return {};
+  }
+
+  uint64_t position() const { return pos_; }
+
+  std::expected<void, FeedError> feedTo(uint64_t end, host::DecodeRingProducer& ring, const StopFlag& stop) {
+    flats_.reach(end / kBucket);
+    while (pos_ < end) {
+      if (stop.load(std::memory_order_relaxed)) return feedError(FeedFailure::Stopped, "stopped");
+      if (flats_.usable() && pos_ % kBucket == 0) {
+        const uint64_t b = pos_ / kBucket;
+        const uint64_t n = flats_.runFrom(b);
+        if (n != 0 && n >= flats_.minBuckets()) {
+          if (auto skipped = writeSkip(ring, *flats_.levels(b), n * kBucket, stop); !skipped) return skipped;
+          pos_ += n * kBucket;
+          continue;
+        }
+      }
+      const std::span<const capture::IndexRecord> records = capture_.indexRange(pos_, pos_ + 1);
+      if (records.empty()) {
+        return feedError(FeedFailure::Failed, "sample " + std::to_string(pos_) + " of capture is not stored");
+      }
+      const capture::IndexRecord& window = records.front();
+      uint64_t piece_end = (std::min)(window.endSample(), end);
+      if (flats_.usable()) {
+        if (const auto next =
+                flats_.nextRunStart((pos_ + kBucket - 1) / kBucket, (piece_end + kBucket - 1) / kBucket)) {
+          piece_end = (std::min)(piece_end, *next * kBucket);
+        }
+      }
+      if (loaded_ != window.first_sample_index) {
+        const uint64_t bytes = (uint64_t{window.num_samples} + 7) / 8;
+        for (uint32_t c = 0; c < channels_.size(); ++c) {
+          auto read = capture_.read(channels_[c], window.first_sample_index / 8,
+                                    std::span<uint8_t>(planes_[c]).first(static_cast<size_t>(bytes)));
+          if (!read) return feedError(FeedFailure::Failed, "capture could not be read: " + read.error());
+        }
+        loaded_ = window.first_sample_index;
+      }
+      if (auto written = writePlanes(ring, spans_, pos_ - window.first_sample_index, piece_end - pos_, stop);
+          !written) {
+        return written;
+      }
+      pos_ = piece_end;
+    }
+    return {};
+  }
+
+ private:
+  const GrowingCapture& capture_;
+  const std::vector<uint32_t>& channels_;
+  const CaptureFeedOptions& options_;
+  FlatBuckets flats_;
+  std::vector<std::vector<uint8_t>> planes_;
+  std::vector<std::span<const uint8_t>> spans_;
+  uint64_t loaded_ = UINT64_MAX;
+  uint64_t pos_ = 0;
+};
+
+std::expected<void, FeedError> feedGrowing(const GrowingCapture& capture, const CaptureEnd& end,
                                            const std::vector<uint32_t>& channels, const CaptureFeedOptions& options,
                                            host::DecodeRingProducer& ring, const StopFlag& stop) {
   if (options.before_feed) options.before_feed(stop);
-  if (stop.load(std::memory_order_relaxed)) return feedError(FeedFailure::Stopped, "stopped");
-  const auto bound = static_cast<uint32_t>(channels.size());
-  const uint64_t window_bytes = (uint64_t{buffer.plan().samplesPerWindow()} + 7) / 8;
-  const uint64_t first = extent.first_sample;
-  const uint64_t end = extent.first_sample + extent.count;
-  FlatBuckets flats(buffer, channels, (first + kBucket - 1) / kBucket, end / kBucket,
-                    (options.min_skip_samples + kBucket - 1) / kBucket);
-
-  std::vector<std::vector<uint8_t>> planes;
-  std::vector<std::span<const uint8_t>> spans;
-  try {
-    const uint64_t bytes = window_bytes * bound;
-    if (options.before_allocate) options.before_allocate(AllocationSite::FeedPlanes, bytes);
-    planes.assign(bound, std::vector<uint8_t>(static_cast<size_t>(window_bytes)));
-    for (const auto& p : planes) spans.emplace_back(p);
-    flats.allocate();
-  } catch (const std::bad_alloc&) {
-    return feedError(FeedFailure::OutOfMemory, "out of memory for samples of " + std::to_string(bound) +
-                                                   " bound channels (" + std::to_string(window_bytes * bound) +
-                                                   " bytes window)");
-  }
-
-  uint64_t loaded = UINT64_MAX;
-  uint64_t pos = first;
-  while (pos < end) {
+  std::optional<capture::CaptureExtent> stored;
+  capture::CaptureExtent started;
+  for (;;) {
     if (stop.load(std::memory_order_relaxed)) return feedError(FeedFailure::Stopped, "stopped");
-    if (flats.usable() && pos % kBucket == 0) {
-      const uint64_t b = pos / kBucket;
-      const uint64_t n = flats.runFrom(b);
-      if (n != 0 && n >= flats.minBuckets()) {
-        if (auto skipped = writeSkip(ring, *flats.levels(b), n * kBucket, stop); !skipped) return skipped;
-        pos += n * kBucket;
-        continue;
+    stored = end.stored();
+    started = stored ? *stored : capture.publishedExtent();
+    if (stored || started.count != 0) break;
+    (void)end.waitForStored(kGrowingFeedWait);
+  }
+  const uint64_t first = started.first_sample;
+  WindowFeed feed(capture, channels, options, first);
+  if (auto allocated = feed.allocate(); !allocated) return allocated;
+  for (;;) {
+    if (stop.load(std::memory_order_relaxed)) return feedError(FeedFailure::Stopped, "stopped");
+    if (!stored) stored = end.stored();
+    if (stored) {
+      if (stored->first_sample != first) {
+        return feedError(FeedFailure::Failed, "capture's stored samples begin at sample " +
+                                                  std::to_string(stored->first_sample) +
+                                                  ", but its decode stream began at sample " + std::to_string(first));
       }
-    }
-    const std::span<const capture::IndexRecord> records = buffer.indexRange(pos, pos + 1);
-    if (records.empty()) return feedError(FeedFailure::Failed, "sample " + std::to_string(pos) + " of capture is not stored");
-    const capture::IndexRecord& window = records.front();
-    uint64_t piece_end = (std::min)(window.endSample(), end);
-    if (flats.usable()) {
-      if (const auto next = flats.nextRunStart((pos + kBucket - 1) / kBucket, (piece_end + kBucket - 1) / kBucket)) {
-        piece_end = (std::min)(piece_end, *next * kBucket);
+      if (first + stored->count < feed.position()) {
+        return feedError(FeedFailure::Failed, "decode stream holds " + std::to_string(feed.position() - first) +
+                                                  " samples of capture, but capture stored only " +
+                                                  std::to_string(stored->count));
       }
+      return feed.feedTo(first + stored->count, ring, stop);
     }
-    if (loaded != window.first_sample_index) {
-      const uint64_t bytes = (uint64_t{window.num_samples} + 7) / 8;
-      for (uint32_t c = 0; c < bound; ++c) {
-        auto read = buffer.read(channels[c], window.first_sample_index / 8,
-                                std::span<uint8_t>(planes[c]).first(static_cast<size_t>(bytes)));
-        if (!read) {
-          return feedError(FeedFailure::Failed, "capture could not be read: " + read.error());
-        }
-      }
-      loaded = window.first_sample_index;
+    const capture::CaptureExtent published = capture.publishedExtent();
+    if (auto fed = feed.feedTo(published.first_sample + published.count, ring, stop); !fed) return fed;
+    ring.flush();
+    (void)end.waitForStored(kGrowingFeedWait);
+  }
+}
+
+std::expected<void, std::string> checkChannels(const capture::CapturePlan& plan, const std::vector<uint32_t>& channels) {
+  if (channels.empty()) return std::unexpected(std::string("decode job needs at least one bound channel"));
+  if (channels.size() > decode::kMaxChannels) {
+    return std::unexpected("decode job binds at most " + std::to_string(decode::kMaxChannels) + " channels; " +
+                           std::to_string(channels.size()) + " were bound");
+  }
+  for (const uint32_t c : channels) {
+    if (c >= plan.channels()) {
+      return std::unexpected("channel " + std::to_string(c) + " is bound, but capture has " +
+                             std::to_string(plan.channels()) + " channels");
     }
-    if (auto written = writePlanes(ring, spans, pos - window.first_sample_index, piece_end - pos, stop); !written) {
-      return written;
-    }
-    pos = piece_end;
   }
   return {};
 }
@@ -232,20 +326,24 @@ std::expected<FeedFunction, std::string> captureFeed(const capture::RawCaptureBu
   if (auto view = capture::RawBufferSignalView::create(buffer, extent, tail); !view) {
     return std::unexpected(std::move(view.error()));
   }
-  if (channels.empty()) return std::unexpected(std::string("decode job needs at least one bound channel"));
-  if (channels.size() > decode::kMaxChannels) {
-    return std::unexpected("decode job binds at most " + std::to_string(decode::kMaxChannels) + " channels; " +
-                           std::to_string(channels.size()) + " were bound");
+  if (auto checked = checkChannels(buffer.plan(), channels); !checked) return std::unexpected(std::move(checked.error()));
+  return FeedFunction([stored = std::make_shared<const StoredCapture>(buffer, extent),
+                       end = std::make_shared<const CaptureEnd>(extent), channels = std::move(channels),
+                       options = std::move(options)](host::DecodeRingProducer& ring, const StopFlag& stop) {
+    return feedGrowing(*stored, *end, channels, options, ring, stop);
+  });
+}
+
+std::expected<FeedFunction, std::string> growingCaptureFeed(std::shared_ptr<const GrowingCapture> capture,
+                                                            std::shared_ptr<const CaptureEnd> end,
+                                                            std::vector<uint32_t> channels,
+                                                            CaptureFeedOptions options) {
+  if (auto checked = checkChannels(capture->plan(), channels); !checked) {
+    return std::unexpected(std::move(checked.error()));
   }
-  for (const uint32_t c : channels) {
-    if (c >= buffer.plan().channels()) {
-      return std::unexpected("channel " + std::to_string(c) + " is bound, but capture has " +
-                             std::to_string(buffer.plan().channels()) + " channels");
-    }
-  }
-  return FeedFunction([&buffer, extent, channels = std::move(channels), options = std::move(options)](
-                          host::DecodeRingProducer& ring, const StopFlag& stop) {
-    return feedCapture(buffer, extent, channels, options, ring, stop);
+  return FeedFunction([capture = std::move(capture), end = std::move(end), channels = std::move(channels),
+                       options = std::move(options)](host::DecodeRingProducer& ring, const StopFlag& stop) {
+    return feedGrowing(*capture, *end, channels, options, ring, stop);
   });
 }
 

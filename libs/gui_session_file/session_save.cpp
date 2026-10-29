@@ -125,6 +125,7 @@ std::expected<capture::CaptureMetadata, std::string> captureMetadataFor(const gu
   m.requested_post_trigger_samples = kept.requestedPostTriggerSamples;
   m.memory_shortfall = kept.shortfall;
   m.extent = kept.extent;
+  m.trimmed = kept.trimmed;
   m.device = kept.device;
   m.device_properties = view.deviceProperties;
   m.decoder_setup = view.decoderSetup;

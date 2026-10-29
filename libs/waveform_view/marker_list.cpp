@@ -82,6 +82,19 @@ bool MarkerList::remove(MarkerId id) {
   return true;
 }
 
+bool MarkerList::removeAll() {
+  if (markers_.empty()) return false;
+  markers_.clear();
+  return true;
+}
+
+bool MarkerList::trim(std::uint64_t first, std::uint64_t count) {
+  const std::size_t before = markers_.size();
+  std::erase_if(markers_, [&](const Marker& m) { return m.sample < first || m.sample - first >= count; });
+  for (Marker& m : markers_) m.sample -= first;
+  return markers_.size() != before || (first != 0 && !markers_.empty());
+}
+
 const Marker* MarkerList::find(MarkerId id) const {
   auto it = std::find_if(markers_.begin(), markers_.end(), [&](const Marker& m) { return m.id == id; });
   return it == markers_.end() ? nullptr : &*it;

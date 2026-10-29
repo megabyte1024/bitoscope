@@ -5,6 +5,7 @@
 #include "cli_settings.h"
 
 #include <bit>
+#include <ostream>
 #include <variant>
 
 #include "device_properties.h"
@@ -32,8 +33,15 @@ std::string ceilingRateText(uint64_t milli_hz) {
 }
 
 std::expected<std::vector<ipc::props::PropertyValue>, std::string> readAnalyzerSettings(
-    const std::map<std::string, std::string>& settings, const host::pipe::PluginDevice& session) {
-  auto values = device_properties::readSettings(analyzerTree(session), settings);
+    const std::map<std::string, std::string>& settings, const host::pipe::PluginDevice& session, std::ostream* notes) {
+  std::map<std::string, std::string> current = settings;
+  if (session.plugin_id.starts_with("demo/") && !current.contains("layout")) {
+    if (auto old = current.extract("encoding"); !old.empty()) {
+      current.emplace("layout", std::move(old.mapped()));
+      if (notes != nullptr) *notes << "bitoscope_cli: setting 'encoding' is now named 'layout'; old name still works\n";
+    }
+  }
+  auto values = device_properties::readSettings(analyzerTree(session), current);
   if (!values) {
     return std::unexpected("settings for '" + session.plugin_id + "' were refused - nothing was started: " +
                            values.error());

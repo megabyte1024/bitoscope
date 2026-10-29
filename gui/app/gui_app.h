@@ -11,6 +11,7 @@
 #include <capture_settings.h>
 #include <capture_status.h>
 #include <close_flow.h>
+#include <string_view>
 #include <color_choice.h>
 #include <device_router.h>
 #include <device_worker.h>
@@ -36,12 +37,15 @@
 #include <gui_decoders.h>
 #include <option_text_buffers.h>
 #include <live_capture_slot.h>
+#include <panel_decodes.h>
+#include <source_chain.h>
 #include <log_view.h>
 #include <logger.h>
 #include <memory_probe.h>
 #include <new_session_wizard.h>
 #include <number_format.h>
 #include <panel_capture.h>
+#include <unsaved_mark.h>
 #include <preferences.h>
 #include <task_pool.h>
 #include <preferences_file.h>
@@ -99,6 +103,8 @@ class GuiApp {
   bool pumpBackground();
 
   bool captureRunning() const;
+  bool captureAdvanced();
+  std::string windowTitle(std::string_view base) const;
   bool asyncWorkInFlight() const;
   bool wantsMoreFrames() const;
   bool reduceIdleFrameRate() const { return reduceIdleFrameRate_; }
@@ -171,7 +177,7 @@ class GuiApp {
     std::vector<gui_decode::LanePictureCache> lanePictures;
     std::uint64_t laneViewSerial = 0;
     std::optional<capture::RawBufferSignalView> laneView;
-    std::unique_ptr<gui_decode::DecoderRunner> decoderRunner;
+    gui_decode::PanelDecodes decodes;
     std::string addDecoderPick;
     std::uint32_t nextDecoderColor = 0;
     std::array<char, 64> decoderFilter{};
@@ -287,12 +293,14 @@ class GuiApp {
   void drawFileErrorModal();
   void drawReplaceModal();
 
-  void syncWaveform(gui_session::SessionId id, SessionUi& ui, const gui_capture::LiveCaptureSlot::View* live);
+  void syncWaveform(gui_session::SessionId id, SessionUi& ui, const std::optional<gui_waveform_frame::LiveSource>& live);
   void dropWaveformCapture(SessionUi& ui);
   void retireWaveform(SessionUi& ui);
   void waveformCommand(SessionUi& ui, waveform_view::ViewCommand command, double anchorPixelX);
   void applyLaneAction(SessionUi& ui, const waveform_view::LaneActionResult& result);
   void resetLaneOrder(SessionUi& ui);
+  void trimCapture(gui_session::SessionId id, SessionUi& ui, gui_capture::TrimSide side, std::uint64_t at);
+  void trimMenuItems(gui_session::SessionId id, SessionUi& ui);
   static bool hasLanes(const SessionUi& ui);
 
   void handleZoomShortcuts();
@@ -344,11 +352,26 @@ class GuiApp {
   const decode::DecoderRegistry& decoderRegistry() const;
   void startDecoders();
   void endDecoders();
-  static std::vector<gui_decode::CapturedChannel> capturedChannelsFor(const SessionUi& ui);
+  static std::vector<gui_decode::CapturedChannel> capturedChannelsFor(const SessionUi& ui,
+                                                                      std::span<const std::uint32_t> devices);
   void runDecodersForSession(gui_session::SessionId id, SessionUi& ui);
   void decodeSessionAgain(gui_session::SessionId id, SessionUi& ui);
   void startDecodeRun(gui_session::SessionId id, SessionUi& ui);
-  SessionUi* decodeRunOwner(std::uint64_t run);
+  struct PreparedRun {
+    std::uint64_t id = 0;
+    decode::ChainPlan plan;
+    gui_decode::DecodeMemory memory;
+  };
+  using RunBudget = std::function<std::expected<std::uint64_t, std::string>()>;
+  std::optional<PreparedRun> prepareDecodeRun(gui_session::SessionId id, SessionUi& ui,
+                                              std::span<const std::uint32_t> devices, const decode::CaptureFacts& facts,
+                                              const RunBudget& budget);
+  std::vector<std::shared_ptr<const capture::CaptureSession>> runningCaptures();
+  gui_decode::DecodeRun startLiveRun(gui_session::SessionId id, SessionUi& ui,
+                                     std::shared_ptr<const gui_decode::LiveRunCapture> capture);
+  void followLiveDecodes();
+  void showCapturedLanes(SessionUi& ui);
+  SessionUi* decodeRunOwner(std::uint64_t run, gui_session::SessionId* id = nullptr);
   void letGoDecodes(SessionUi& ui);
   void decoderResultReceived(std::uint64_t run, std::size_t decoderIndex,
                              const std::expected<std::shared_ptr<const gui_decode::DecodedAnnotations>, std::string>& result);

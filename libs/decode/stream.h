@@ -33,6 +33,9 @@ inline constexpr uint32_t kKindData = 0;
 inline constexpr uint32_t kKindBoundary = 1;
 inline constexpr uint32_t kKindBegin = 2;
 
+inline constexpr std::string_view kStreamsNeedFinalLength =
+    "reads streams, which end only when capture has ended: it needs capture's final length, not bound";
+
 inline constexpr uint32_t kFlagDamaged = 1u << 0;
 inline constexpr uint32_t kFlagNoMosi = 1u << 1;
 inline constexpr uint32_t kFlagNoMiso = 1u << 2;
@@ -125,21 +128,36 @@ struct GuardedOutput {
   bool wanted = false;
 };
 
-class GuardedStreamSink final : public StreamSink {
+class StreamGuard {
  public:
-  GuardedStreamSink(StreamSink& out, uint64_t sample_count, std::vector<GuardedOutput> outputs);
-  void add(uint32_t output, std::span<const StreamItem> batch) override;
+  StreamGuard(uint64_t sample_count, std::vector<GuardedOutput> outputs);
+  bool admitOutput(uint32_t output);
+  bool admitItem(uint32_t output, const StreamItem& item);
+  bool admit(uint32_t output, const StreamItem& item) { return admitOutput(output) && admitItem(output, item); }
+  bool endsWithin(uint64_t samples);
   const std::string& error() const { return error_; }
 
  private:
   std::string check(uint32_t output, const StreamItem& item) const;
 
-  StreamSink& out_;
   uint64_t sample_count_;
   std::vector<GuardedOutput> outputs_;
   std::vector<uint64_t> last_begin_;
   std::vector<bool> seen_;
+  uint32_t furthest_output_ = 0;
+  StreamItem furthest_{};
   std::string error_;
+};
+
+class GuardedStreamSink final : public StreamSink {
+ public:
+  GuardedStreamSink(StreamSink& out, uint64_t sample_count, std::vector<GuardedOutput> outputs);
+  void add(uint32_t output, std::span<const StreamItem> batch) override;
+  const std::string& error() const { return guard_.error(); }
+
+ private:
+  StreamSink& out_;
+  StreamGuard guard_;
 };
 
 std::expected<void, std::string> checkBinding(std::string_view reader, const InputSpec& input,

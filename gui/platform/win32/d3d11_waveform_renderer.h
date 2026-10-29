@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "view_table.h"
 #include "waveform_renderer.h"
 
 namespace bitoscope::gui::win32 {
@@ -31,8 +32,6 @@ class D3d11WaveformRenderer final : public WaveformRenderer {
 
  private:
   struct View {
-    std::uint32_t width = 0;
-    std::uint32_t rows = 0;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> levels;
     float left = 0;
@@ -47,7 +46,6 @@ class D3d11WaveformRenderer final : public WaveformRenderer {
   static void callback(const ImDrawList* list, const ImDrawCmd* cmd);
   void render(std::uint64_t view, const ImDrawCmd* cmd);
   bool ensurePipeline();
-  void problem(std::string line);
 
   ID3D11Device* device_;
   ID3D11DeviceContext* context_;
@@ -59,8 +57,8 @@ class D3d11WaveformRenderer final : public WaveformRenderer {
   Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
   Microsoft::WRL::ComPtr<ID3D11BlendState> blend_;
   Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depth_;
+  gui_waveform_frame::WaveformViewTable table_;
   std::map<std::uint64_t, View> views_;
-  std::vector<std::string> problems_;
 };
 
 }

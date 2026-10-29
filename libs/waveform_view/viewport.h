@@ -41,6 +41,8 @@ class Viewport {
 
   void zoom1to1(double pixelX, uint64_t totalSamples);
 
+  void keepAfterTrim(uint64_t firstKept, uint64_t keptSamples);
+
   Viewport resampled(uint32_t widthPixels) const;
 
   double sampleToPixel(double sample) const { return (sample - firstVisibleSample_) / samplesPerPixel_; }

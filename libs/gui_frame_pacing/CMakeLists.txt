@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 
 add_library(bitoscope_gui_frame_pacing STATIC
+    frame_loop.cpp
+    frame_loop.h
     frame_pacer.cpp
     frame_pacer.h
 )

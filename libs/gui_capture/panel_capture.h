@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "capture_outcome.h"
+#include "capture_trim.h"
 #include "progress.h"
 
 namespace bitoscope::gui_capture {
@@ -24,6 +25,7 @@ class PanelCapture {
   bool decodersUnsaved() const { return decodersUnsaved_; }
   void markDecodersEdited();
   void release();
+  std::expected<void, std::string> trim(TrimSide side, uint64_t at);
 
   void started(uint64_t run);
   bool running() const { return run_.has_value(); }

@@ -391,10 +391,15 @@ void GuiApp::captureFinished(std::uint64_t run, const std::expected<acquisition:
       ui->keptDeviceProperties = gui_session_file::savedDeviceProperties(outcome.sentProperties, *opened);
     }
   }
+  const bool liveKept = ui->decodes.captureEnded(outcome);
   ui->running.reset();
   ui->capture.finished(run, std::move(outcome));
   dropWaveformCapture(*ui);
-  runDecodersForSession(id, *ui);
+  if (liveKept) {
+    showCapturedLanes(*ui);
+  } else {
+    runDecodersForSession(id, *ui);
+  }
 }
 
 void GuiApp::stopAllCaptures() {
@@ -412,94 +417,45 @@ void GuiApp::dropWaveformCapture(SessionUi& ui) {
   if (!ui.waveform) {
     return;
   }
-  SessionWaveform& w = *ui.waveform;
-  w.source = nullptr;
-  w.extent.reset();
-  w.tailed.reset();
-  w.tail = {};
-  w.store.reset();
-  w.empty.reset();
-  w.session.reset();
-  w.keptBuffer.reset();
-  w.shows = SessionWaveform::Shows::Nothing;
-  w.liveGeneration = 0;
-  w.timeZero = 0;
-  w.laneDevice.clear();
-  w.columns.forget();
+  ui.waveform->sources.drop();
+  ui.waveform->columns.forget();
 }
 
-void GuiApp::syncWaveform(gui_session::SessionId id, SessionUi& ui, const gui_capture::LiveCaptureSlot::View* live) {
+namespace {
+
+void resetWaveformView(SessionWaveform& w, bool ofCapture) {
+  if (w.viewport && w.fitted && w.viewOfCapture) {
+    w.carriedZoom = wv::carriedZoomOf(*w.viewport);
+  }
+  w.viewOfCapture = ofCapture;
+  w.columns.forget();
+  w.fitted = false;
+  w.viewport.reset();
+  w.lastTotal = 0;
+}
+
+}
+
+void GuiApp::syncWaveform(gui_session::SessionId id, SessionUi& ui,
+                          const std::optional<gui_waveform_frame::LiveSource>& live) {
   if (!ui.waveform) {
     ui.waveform = std::make_shared<SessionWaveform>();
     ui.waveform->view = id;
   }
   SessionWaveform& w = *ui.waveform;
-  const auto setLanes = [&](const std::vector<std::uint32_t>& devices) {
-    w.laneDevice = devices;
-  };
-  const auto fresh = [&](bool ofCapture) {
-    if (w.viewport && w.fitted && w.viewOfCapture) {
-      w.carriedZoom = wv::carriedZoomOf(*w.viewport);
-    }
-    w.viewOfCapture = ofCapture;
-    w.columns.forget();
-    w.fitted = false;
-    w.viewport.reset();
-    w.lastTotal = 0;
-  };
 
-  if (live != nullptr && ui.running) {
-    if (w.shows != SessionWaveform::Shows::Live || w.liveGeneration != live->generation()) {
-      dropWaveformCapture(ui);
-      w.shows = SessionWaveform::Shows::Live;
-      w.liveGeneration = live->generation();
-      w.requestedSamples = ui.running->requestedSamples;
-      setLanes(ui.running->deviceChannels);
-      w.session = live->session();
-      if (w.session) {
-        w.store = std::make_unique<waveform_capture_source::CaptureWaveformSource>(w.session->buffer());
-        const wv::WaveformSource* stored = w.store.get();
-        if (w.session->publishesTail()) {
-          w.tailed = std::make_unique<waveform_capture_source::LiveTailWaveformSource>(*w.store, w.tail);
-          stored = w.tailed.get();
-        }
-        w.extent = std::make_unique<wv::ExtentWaveformSource>(*stored, 0, 0);
-        w.source = w.extent.get();
-      } else {
-        w.empty = std::make_unique<wv::EmptyWaveformSource>(static_cast<std::uint32_t>(w.laneDevice.size()),
-                                                            ui.running->request.sample_rate_milli_hz);
-        w.source = w.empty.get();
-      }
-      w.note.clear();
-      fresh(true);
-    }
-    if (w.session && w.extent) {
-      const capture::CaptureSnapshot snapshot = w.tailed ? w.session->snapshot(w.tail) : w.session->snapshot();
-      w.extent->setExtent(snapshot.extent.first_sample, snapshot.extent.count + w.tail.count);
-      w.timeZero = gui_capture::timeZeroSample(snapshot.trigger_origin, snapshot.trigger_sample_index);
-    }
-    return;
+  gui_waveform_frame::SourceChoice choice;
+  if (live && ui.running) {
+    choice.live = *live;
   }
-
   if (const auto& kept = ui.capture.kept(); kept && kept->buffer) {
-    if (w.shows != SessionWaveform::Shows::Kept || w.keptBuffer != kept->buffer) {
-      dropWaveformCapture(ui);
-      w.shows = SessionWaveform::Shows::Kept;
-      w.session = kept->session;
-      w.keptBuffer = kept->buffer;
-      w.requestedSamples = kept->requestedSamples;
-      setLanes(ui.keptDeviceChannels);
-      w.store = std::make_unique<waveform_capture_source::CaptureWaveformSource>(*w.keptBuffer);
-      const capture::CaptureExtent extent = kept->extent;
-      w.extent = std::make_unique<wv::ExtentWaveformSource>(*w.store, extent.first_sample, extent.count);
-      w.source = w.extent.get();
-      w.timeZero = gui_capture::timeZeroSample(*kept);
-      w.note.clear();
-      fresh(true);
-    }
-    return;
+    choice.kept = gui_waveform_frame::KeptSource{kept->buffer,
+                                                 kept->session,
+                                                 kept->requestedSamples,
+                                                 ui.keptDeviceChannels,
+                                                 kept->extent,
+                                                 gui_capture::timeZeroSample(*kept)};
   }
-
   std::vector<std::uint32_t> devices;
   if (ui.settings) {
     for (std::uint32_t c = 0; c < ui.settings->channels.size(); ++c) {
@@ -508,21 +464,29 @@ void GuiApp::syncWaveform(gui_session::SessionId id, SessionUi& ui, const gui_ca
       }
     }
   }
-  const std::uint64_t rate =
-    ui.settings && ui.settings->sampleRateMilliHz != 0 ? ui.settings->sampleRateMilliHz : 1'000'000'000;
-  const std::uint64_t idleRequested = ui.settings ? ui.settings->lengthSamples : 0;
-  if (w.shows != SessionWaveform::Shows::Nothing || !w.empty || w.laneDevice != devices ||
-      w.empty->sampleRateMilliHz() != rate || w.requestedSamples != idleRequested) {
-    dropWaveformCapture(ui);
-    setLanes(devices);
-    w.empty = std::make_unique<wv::EmptyWaveformSource>(static_cast<std::uint32_t>(devices.size()), rate);
-    w.source = w.empty.get();
-    w.requestedSamples = idleRequested;
-    fresh(false);
+  choice.idle = gui_waveform_frame::IdleSource{
+    devices, ui.settings && ui.settings->sampleRateMilliHz != 0 ? ui.settings->sampleRateMilliHz : 1'000'000'000,
+    ui.settings ? ui.settings->lengthSamples : 0};
+
+  switch (w.sources.sync(choice)) {
+  case gui_waveform_frame::SourceChange::ReplacedCapture:
+    w.note.clear();
+    resetWaveformView(w, true);
+    break;
+  case gui_waveform_frame::SourceChange::NewExtent:
+    w.columns.forget();
+    break;
+  case gui_waveform_frame::SourceChange::ReplacedIdle:
+    resetWaveformView(w, false);
+    break;
+  case gui_waveform_frame::SourceChange::None:
+    break;
   }
-  w.note = ui.capture.lastError() ? trf("Capture failed, nothing kept: {}", *ui.capture.lastError())
-           : !ui.capabilitiesProblem.empty() ? trf("This device cannot capture: {}", ui.capabilitiesProblem)
-                                             : std::string();
+  if (w.sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Nothing) {
+    w.note = ui.capture.lastError() ? trf("Capture failed, nothing kept: {}", *ui.capture.lastError())
+             : !ui.capabilitiesProblem.empty() ? trf("This device cannot capture: {}", ui.capabilitiesProblem)
+                                               : std::string();
+  }
 }
 
 void GuiApp::rateCombo(SessionUi& ui, const char* id) {
@@ -785,7 +749,8 @@ void GuiApp::drawStartModals(const gui_session::Session& session, SessionUi& ui)
                                   ? trf("All pre-trigger samples and at least {} samples after trigger ({}) fit "
                                         "even if nothing compresses; usually more fit.",
                                         gui_format::withThousands(*floor), duration)
-                                  : trf("At least {} samples ({}) fit even if nothing compresses; usually more fit.",
+                                  : trf("At least {} samples ({}) fit even if nothing compresses, unless memory is "
+                                        "taken meanwhile; usually more fit.",
                                         gui_format::withThousands(*floor), duration))
                                  .c_str());
     }
@@ -869,7 +834,7 @@ std::vector<gc::ClosingPanel> GuiApp::closingPanels() const {
     panel.id = session.id;
     panel.name = session.name;
     if (const auto ui = sessionUi_.find(session.id); ui != sessionUi_.end()) {
-      panel.unsaved = ui->second.capture.hasUnsavedCapture();
+      panel.unsaved = gc::panelUnsavedMark(ui->second.capture);
       panel.saving = ui->second.capture.saving();
       panel.running = ui->second.capture.running();
     }

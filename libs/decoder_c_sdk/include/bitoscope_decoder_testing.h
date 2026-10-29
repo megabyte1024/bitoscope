@@ -34,6 +34,10 @@ int bitoscope_memory_add_items(bitoscope_decode_input* in, const bitoscope_memor
 
 int bitoscope_memory_set_progress_step(bitoscope_decode_input* in, uint64_t step);
 
+void bitoscope_test_count_scans(bitoscope_decode_input* in, uint64_t* counter);
+
+uint64_t* bitoscope_test_scan_counter(const bitoscope_decode_input* in);
+
 bitoscope_annotations* bitoscope_collect_annotations(bitoscope_decode_input* in);
 
 int bitoscope_finish_annotations(bitoscope_annotations* out);
@@ -112,7 +116,7 @@ typedef struct bitoscope_test_job {
 bitoscope_test_run* bitoscope_test_decode(const bitoscope_test_plugin* plugin, const bitoscope_test_capture* capture,
                                           const bitoscope_test_job* job);
 const char* bitoscope_test_error(const bitoscope_test_run* run);
-uint64_t bitoscope_test_look_ahead(const bitoscope_test_run* run);
+uint64_t bitoscope_test_look_ahead_samples(const bitoscope_test_run* run);
 size_t bitoscope_test_annotation_count(const bitoscope_test_run* run);
 const bitoscope_annotation* bitoscope_test_annotation_at(const bitoscope_test_run* run, size_t index);
 size_t bitoscope_test_item_count(const bitoscope_test_run* run, const char* output);

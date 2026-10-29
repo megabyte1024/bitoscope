@@ -10,6 +10,7 @@
 #include "annotation_lane_index.h"
 #include "annotation_row_summary.h"
 #include "annotation_shape.h"
+#include "lane_coverage.h"
 
 namespace bitoscope::waveform_view {
 
@@ -208,10 +209,12 @@ class PictureBuilder {
     out_.summarized = groups.usable() && groups.coverageUsable() &&
                       laneNeedsSummary(laneRangeCount(groups, inView, derived, rangeBegin, rangeEnd), columnCount);
     if (out_.summarized) {
-      const AnnotationLaneSummary summary = summarizeLane(groups, first, spp, columnCount);
+      const LaneCoverage coverage(groups, first, spp, columnCount);
+      AnnotationReader reader(groups);
+      const AnnotationLaneSummary summary = summarizeLane(reader, coverage, first, spp, columnCount);
       for (std::size_t slot = 0; slot < rows.size(); ++slot) {
         const RowSummary rowSummary =
-          summarizeLaneRow(groups, derived, rows[slot].id, visibility, first, spp, columnCount);
+          summarizeLaneRow(reader, coverage, derived, rows[slot].id, visibility, first, spp, columnCount);
         runs(solidRuns(withoutColumns(rowSummary.runs, rowTextMarks(groups, summary.textMarks, rows[slot].id))),
              rows[slot].id, rowTops[slot]);
       }

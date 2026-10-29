@@ -172,6 +172,7 @@ struct CaptureFacts {
   uint64_t sample_rate_milli_hz = 0;
   uint32_t channel_count = 0;
   uint64_t total_samples = 0;
+  bool total_is_bound = false;
 };
 
 std::string displayOf(const Decoder& decoder);
@@ -337,6 +338,7 @@ class Decoder {
   std::expected<void, std::string> decodeStreams(StreamInputs& inputs, const CaptureFacts& facts,
                                                  AnnotationSink& sink, StreamOutputs* outputs = nullptr) {
     if (auto r = requireEntry(Reads::Streams); !r) return r;
+    if (auto r = refuseBound(facts); !r) return r;
     if (auto r = checkCapture(facts); !r) return r;
     if (auto r = checkInputsGiven(inputs); !r) return r;
     OutputsScope scope(*this);
@@ -352,6 +354,7 @@ class Decoder {
   std::expected<void, std::string> decodeMixed(const SignalView& view, StreamInputs& inputs, const CaptureFacts& facts,
                                                AnnotationSink& sink, StreamOutputs* outputs = nullptr) {
     if (auto r = requireEntry(Reads::SamplesAndStreams); !r) return r;
+    if (auto r = refuseBound(facts); !r) return r;
     if (auto r = checkCapture(facts); !r) return r;
     if (view.sampleCount() != facts.total_samples || view.channelCount() != facts.channel_count ||
         view.sampleRateMilliHz() != facts.sample_rate_milli_hz) {
@@ -450,6 +453,11 @@ class Decoder {
             std::format("decoder '{}' reads samples and streams: run it with decodeMixed()", name()));
     }
     return std::unexpected(std::format("decoder '{}' reads nothing this library knows", name()));
+  }
+
+  std::expected<void, std::string> refuseBound(const CaptureFacts& facts) const {
+    if (!facts.total_is_bound) return {};
+    return std::unexpected(std::format("decoder '{}' {}", name(), kStreamsNeedFinalLength));
   }
 
   std::expected<void, std::string> checkInputsGiven(const StreamInputs& inputs) const {

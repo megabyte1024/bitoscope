@@ -17,6 +17,7 @@
 #include "bitoscope_decoder_cpp.h"
 #include "bitoscope_decoder_testing.h"
 #include "bitoscope_decoder_testing_cpp.h"
+#include "c_declaration.h"
 
 namespace bitoscope::plugin {
 
@@ -62,9 +63,12 @@ std::string DecodeInput::error() const {
   return e == nullptr ? std::string() : std::string(e);
 }
 
-void DecodeInput::fail(std::string_view reason) { (void)bitoscope_fail_decode(in_, std::string(reason).c_str()); }
+void DecodeInput::fail(std::string_view reason) {
+  stopped_ = true;
+  (void)bitoscope_fail_decode(in_, std::string(reason).c_str());
+}
 
-void DecodeInput::setProgress(uint64_t (*ask)(void*), void* user) {
+void DecodeInput::setProgress(uint64_t (*ask)(void*, uint64_t), void* user) {
   if (out_ == nullptr) return;
   ask_ = ask;
   askUser_ = user;
@@ -75,7 +79,7 @@ void DecodeInput::setProgress(uint64_t (*ask)(void*), void* user) {
 
 int DecodeInput::report(uint64_t position) {
   nextReport_ = position > UINT64_MAX - viewSamples_ ? UINT64_MAX : position + viewSamples_;
-  return bitoscope_settle(out_, (std::min)(ask_(askUser_), position));
+  return bitoscope_settle(out_, (std::min)(ask_(askUser_, position), position));
 }
 
 int DecodeInput::progressSpanAt(uint64_t sample, bitoscope_span& view) {
@@ -99,6 +103,7 @@ DecodeJob::DecodeJob(const bitoscope_decode_job& job)
       sampleRateMilliHz(job.sample_rate_milli_hz),
       captureChannels(job.capture_channels),
       totalSamples(job.total_samples),
+      totalIsBound(job.total_is_bound != 0),
       progressStep(job.progress_step) {
   for (size_t i = 0; i < job.num_channels; ++i) {
     const bitoscope_job_channel& c = job.channels[i];
@@ -159,7 +164,7 @@ int checkThrough(void* user, const bitoscope_decode_job* job, bitoscope_reply* r
     const DecodeJob values(*job);
     const auto* decoder = static_cast<const ProtocolDecoder*>(user);
     auto checked = decoder->check(values);
-    if (checked) return bitoscope_reply_look_ahead(reply, decoder->lookAheadSamples(values));
+    if (checked) return bitoscope_reply_look_ahead_samples(reply, decoder->lookAheadSamples(values));
     (void)bitoscope_reply_message(reply, checked.error().c_str());
   } catch (const std::exception& e) {
     (void)bitoscope_reply_message(reply, (std::string("decoder's check threw: ") + e.what()).c_str());
@@ -174,86 +179,8 @@ int checkThrough(void* user, const bitoscope_decode_job* job, bitoscope_reply* r
 bool Decoders::add(std::unique_ptr<ProtocolDecoder> decoder) {
   if (!decoder || decoders_ == nullptr) return false;
   try {
-    const DecoderDeclaration d = decoder->declaration();
-    std::vector<bitoscope_decoder_channel> channels;
-    for (const DecoderChannel& c : d.channels) {
-      channels.push_back({c.name.c_str(), c.description.c_str(), c.required ? 1 : 0, c.display.c_str()});
-    }
-    std::vector<std::vector<const char*>> texts;
-    texts.reserve(d.options.size() * 2);
-    std::vector<bitoscope_decoder_option> options;
-    for (const DecoderOption& o : d.options) {
-      auto& allowed = texts.emplace_back();
-      for (const std::string& v : o.allowedValues) allowed.push_back(v.c_str());
-      auto& unsupported = texts.emplace_back();
-      for (const std::string& v : o.unsupportedValues) unsupported.push_back(v.c_str());
-      options.push_back({o.name.c_str(), o.description.c_str(), static_cast<int>(o.type), o.defaultValue.c_str(),
-                         allowed.empty() ? nullptr : allowed.data(), allowed.size(), o.min ? 1 : 0, o.min.value_or(0),
-                         o.max ? 1 : 0, o.max.value_or(0), unsupported.empty() ? nullptr : unsupported.data(),
-                         unsupported.size(), o.display.c_str()});
-    }
-    std::vector<const char*> unsupportedOptions;
-    for (const std::string& id : d.unsupportedOptions) unsupportedOptions.push_back(id.c_str());
-    std::vector<const char*> protocols;
-    for (const std::string& id : d.protocols) protocols.push_back(id.c_str());
-    std::vector<bitoscope_annotation_class> classes;
-    for (const AnnotationClass& k : d.classes) {
-      classes.push_back({k.id, k.name.c_str(), static_cast<int>(k.format), k.hexDigits,
-                         k.hexDigitsOption.empty() ? nullptr : k.hexDigitsOption.c_str(), static_cast<int>(k.role)});
-    }
-    std::vector<bitoscope_annotation_row> rows;
-    for (const AnnotationRow& r : d.rows) rows.push_back({r.id, r.name.c_str()});
-    std::vector<bitoscope_decoder_output> outputs;
-    for (const DecoderOutput& o : d.outputs) {
-      outputs.push_back({o.name.c_str(), o.description.c_str(), static_cast<int>(o.type), o.width,
-                         o.widthOption.empty() ? nullptr : o.widthOption.c_str(),
-                         o.requiresChannel.empty() ? nullptr : o.requiresChannel.c_str(), o.display.c_str(),
-                         o.carries.empty() ? nullptr : o.carries.c_str(),
-                         o.carriesInput.empty() ? nullptr : o.carriesInput.c_str()});
-    }
-    std::vector<bitoscope_decoder_input> inputs;
-    for (const DecoderInput& i : d.inputs) {
-      inputs.push_back(
-          {i.name.c_str(), i.description.c_str(), static_cast<int>(i.type), i.width, i.required ? 1 : 0,
-           i.display.c_str()});
-    }
-    std::vector<bitoscope_row_source> rowSources;
-    for (const RowSource& s : d.rowSources) {
-      rowSources.push_back({s.row, s.cls, s.sourceRow, s.sourceClasses.empty() ? nullptr : s.sourceClasses.data(),
-                            s.sourceClasses.size(), s.enableOption.c_str(), static_cast<int>(s.rule),
-                            {s.grid.rateOption.c_str(), s.grid.offsetBits, s.grid.countOption.c_str(),
-                             s.grid.orderOption.c_str()},
-                            {s.edges.clockChannel.c_str(), s.edges.dataChannel.c_str(), s.edges.countOption.c_str(),
-                             s.edges.count}});
-    }
-
-    bitoscope_decoder c{};
-    c.name = d.name.c_str();
-    c.decode = &decodeThrough;
-    c.channels = channels.empty() ? nullptr : channels.data();
-    c.num_channels = channels.size();
-    c.classes = classes.empty() ? nullptr : classes.data();
-    c.num_classes = classes.size();
-    c.rows = rows.empty() ? nullptr : rows.data();
-    c.num_rows = rows.size();
-    c.version = d.version.c_str();
-    c.options = options.empty() ? nullptr : options.data();
-    c.num_options = options.size();
-    c.unsupported_options = unsupportedOptions.empty() ? nullptr : unsupportedOptions.data();
-    c.num_unsupported_options = unsupportedOptions.size();
-    c.allows_shared_channels = d.allowsSharedChannels ? 1 : 0;
-    c.check = &checkThrough;
-    c.user = decoder.get();
-    c.outputs = outputs.empty() ? nullptr : outputs.data();
-    c.num_outputs = outputs.size();
-    c.inputs = inputs.empty() ? nullptr : inputs.data();
-    c.num_inputs = inputs.size();
-    c.display = d.display.c_str();
-    c.protocols = protocols.empty() ? nullptr : protocols.data();
-    c.num_protocols = protocols.size();
-    c.row_sources = rowSources.empty() ? nullptr : rowSources.data();
-    c.num_row_sources = rowSources.size();
-    if (bitoscope_add_decoder(decoders_, &c) != BITOSCOPE_OK) return false;
+    const plugin_c_sdk::CDeclaration c(decoder->declaration(), &decodeThrough, &checkThrough, decoder.get());
+    if (bitoscope_add_decoder(decoders_, c.get()) != BITOSCOPE_OK) return false;
     keep_->push_back(std::move(decoder));
     return true;
   } catch (const std::exception& e) {
@@ -300,7 +227,7 @@ int runDecoderPlugin(int argc, char** argv, DecoderListFunction list) {
 int ProtocolDecoder::run(ProtocolDecoder& decoder, const DecodeJob& job, bitoscope_decode_input* in,
                          bitoscope_annotations* out) {
   DecodeInput input(in, out);
-  Annotations annotations(out);
+  Annotations annotations(out, input.stopFlag());
   try {
     auto done = decoder.decode(job, input, annotations);
     if (!done) input.fail(done.error().empty() ? std::string("decoder failed") : done.error());
@@ -361,10 +288,11 @@ std::vector<StreamItem> CollectedAnnotations::items(std::string_view output) con
 }
 
 std::expected<StreamWriter, std::string> Annotations::output(const DecodeJob& job, std::string_view name) const {
+  if (job.outputs.empty()) return StreamWriter();
   for (size_t o = 0; o < job.outputs.size(); ++o) {
     if (job.outputs[o].name != name) continue;
     if (!job.outputs[o].wanted) return StreamWriter();
-    return StreamWriter(out_, static_cast<uint32_t>(o));
+    return StreamWriter(out_, static_cast<uint32_t>(o), stop_);
   }
   return std::unexpected("decoder '" + job.decoder + "' has no output '" + std::string(name) + "'");
 }

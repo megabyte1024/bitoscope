@@ -564,6 +564,23 @@ bool GuiApp::captureRunning() const {
   return false;
 }
 
+std::string GuiApp::windowTitle(std::string_view base) const {
+  return gui_capture::windowTitleText(base, gui_capture::windowUnsavedMark(closingPanels()));
+}
+
+bool GuiApp::captureAdvanced() {
+  bool advanced = false;
+  for (auto& [id, ui] : sessionUi_) {
+    if (!ui.runner) {
+      continue;
+    }
+    if (!ui.waveform || ui.waveform->sources.snapshotAdvanced()) {
+      advanced = true;
+    }
+  }
+  return advanced;
+}
+
 std::vector<GuiApp::PanelCaptureStatus> GuiApp::panelCaptureStatuses() const {
   std::vector<PanelCaptureStatus> out;
   for (const auto& session : sessions_.sessions()) {
@@ -633,6 +650,7 @@ bool GuiApp::pumpBackground() {
   if (eventQueue_.drain(eventHandlers_) != 0) {
     changed = true;
   }
+  followLiveDecodes();
   if (askDriversToListAgain()) {
     changed = true;
   }

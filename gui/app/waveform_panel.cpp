@@ -81,6 +81,7 @@
 #include "gui_app.h"
 #include "platform_services.h"
 #include "session_waveform.h"
+#include "theme.h"
 #include "tr.h"
 #include "waveform_renderer.h"
 
@@ -515,14 +516,14 @@ void GuiApp::applyLaneAction(SessionUi& ui, const wv::LaneActionResult& result) 
 }
 
 bool GuiApp::hasLanes(const SessionUi& ui) {
-  return ui.waveform != nullptr && ui.waveform->source != nullptr && ui.waveform->source->channelCount() > 0;
+  return ui.waveform != nullptr && ui.waveform->sources.source() != nullptr && ui.waveform->sources.source()->channelCount() > 0;
 }
 
 void GuiApp::resetLaneOrder(SessionUi& ui) {
   if (!hasLanes(ui)) {
     return;
   }
-  std::vector<std::uint32_t> channels = ui.waveform->laneDevice;
+  std::vector<std::uint32_t> channels = ui.waveform->sources.laneDevice();
   for (const wv::LaneEntry& entry : ui.laneOrder.entries()) {
     if (entry.key.kind == wv::LaneKind::Channel) {
       channels.push_back(entry.key.index);
@@ -538,11 +539,11 @@ void GuiApp::resetLaneOrder(SessionUi& ui) {
 
 void GuiApp::waveformCommand(SessionUi& ui, wv::ViewCommand command, double anchorPixelX) {
   SessionWaveform* waveformPtr = ui.waveform.get();
-  if (waveformPtr == nullptr || !waveformPtr->source || !waveformPtr->viewport) {
+  if (waveformPtr == nullptr || !waveformPtr->sources.source() || !waveformPtr->viewport) {
     return;
   }
   SessionWaveform& waveform = *waveformPtr;
-  const std::uint64_t total = waveform.source->sampleCount();
+  const std::uint64_t total = waveform.sources.source()->sampleCount();
   if (command == wv::ViewCommand::ToggleCursors) {
     if (!waveform.showCursors && !wv::canPlaceMarkersAndCursors(total)) {
       return;
@@ -554,17 +555,82 @@ void GuiApp::waveformCommand(SessionUi& ui, wv::ViewCommand command, double anch
     ui.capture.markViewEdited();
     return;
   }
-  const std::uint64_t viewTotal = waveform.shows == SessionWaveform::Shows::Live
-                                    ? wv::liveViewTotal(total, waveform.requestedSamples)
-                                  : waveform.shows == SessionWaveform::Shows::Nothing
-                                    ? wv::idleViewTotal(waveform.requestedSamples)
+  const std::uint64_t viewTotal = waveform.sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Live
+                                    ? wv::liveViewTotal(total, waveform.sources.requestedSamples())
+                                  : waveform.sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Nothing
+                                    ? wv::idleViewTotal(waveform.sources.requestedSamples())
                                     : total;
   wv::applyCommand(*waveform.viewport, command, anchorPixelX, viewTotal);
 }
 
+void GuiApp::trimMenuItems(gui_session::SessionId id, SessionUi& ui) {
+  SessionWaveform& waveform = *ui.waveform;
+  waveform.trimHovered.reset();
+  if (!waveform.trimPoint) {
+    return;
+  }
+  const std::uint64_t at = *waveform.trimPoint;
+  const auto& kept = ui.capture.kept();
+  const auto deletes = [&](gc::TrimSide side) {
+    return kept && !ui.capture.saving() && gc::extentAfterTrim(kept->extent, side, at).has_value();
+  };
+  const bool deletesBefore = deletes(gc::TrimSide::Before);
+  if (ImGui::MenuItem(tr("Trim before"), nullptr, false, deletesBefore)) {
+    trimCapture(id, ui, gc::TrimSide::Before, at);
+    return;
+  }
+  if (deletesBefore && ImGui::IsItemHovered()) {
+    waveform.trimHovered = gc::TrimSide::Before;
+  }
+  const bool deletesAfter = deletes(gc::TrimSide::After);
+  if (ImGui::MenuItem(tr("Trim after"), nullptr, false, deletesAfter)) {
+    trimCapture(id, ui, gc::TrimSide::After, at);
+    return;
+  }
+  if (deletesAfter && ImGui::IsItemHovered()) {
+    waveform.trimHovered = gc::TrimSide::After;
+  }
+}
+
+void GuiApp::trimCapture(gui_session::SessionId id, SessionUi& ui, gc::TrimSide side, std::uint64_t at) {
+  SessionWaveform& waveform = *ui.waveform;
+  waveform.trimPoint.reset();
+  waveform.trimHovered.reset();
+  const gui_session::Session* session = sessions_.find(id);
+  const std::string name = session != nullptr ? session->name : std::to_string(id);
+  const std::uint64_t held = ui.capture.kept() ? ui.capture.kept()->extent.count : 0;
+  if (const auto trimmed = ui.capture.trim(side, at); !trimmed) {
+    logger_.logf(log::LogLevel::warning, "capture", "{}: no samples deleted: {}", name, trimmed.error());
+    return;
+  }
+  const std::uint64_t remain = ui.capture.kept()->extent.count;
+  const std::uint64_t first = side == gc::TrimSide::Before ? at : 0;
+  if (waveform.markers.trim(first, remain)) {
+    if (waveform.selectedMarker && waveform.markers.find(*waveform.selectedMarker) == nullptr) {
+      waveform.selectedMarker.reset();
+    }
+    if (waveform.contextMarker && waveform.markers.find(*waveform.contextMarker) == nullptr) {
+      waveform.contextMarker.reset();
+    }
+  }
+  if (waveform.cursors) {
+    waveform.cursors = wv::cursorsAfterTrim(*waveform.cursors, first, remain);
+    if (!waveform.cursors) {
+      waveform.showCursors = false;
+    }
+  }
+  if (waveform.viewport) {
+    waveform.viewport->keepAfterTrim(first, remain);
+  }
+  logger_.logf(log::LogLevel::info, "capture", "{}: {} samples {} sample {} deleted; {} remain", name,
+               gui_format::withThousands(held - remain), side == gc::TrimSide::Before ? "before" : "from",
+               gui_format::withThousands(at), gui_format::withThousands(remain));
+  runDecodersForSession(id, ui);
+}
+
 void GuiApp::drawWaveformToolbar(SessionUi& ui) {
   SessionWaveform* waveform = ui.waveform.get();
-  const bool ready = waveform != nullptr && waveform->source && waveform->viewport;
+  const bool ready = waveform != nullptr && waveform->sources.source() && waveform->viewport;
   const double centre = ready ? waveform->viewport->widthPixels() * 0.5 : 0.0;
   ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 3);
   ImGui::BeginDisabled(!ready);
@@ -585,7 +651,7 @@ void GuiApp::drawWaveformToolbar(SessionUi& ui) {
   }
   ImGui::SameLine();
   const bool shown = ready && waveform->showCursors;
-  const bool cursorsDisabled = ready && !shown && !wv::canPlaceMarkersAndCursors(waveform->source->sampleCount());
+  const bool cursorsDisabled = ready && !shown && !wv::canPlaceMarkersAndCursors(waveform->sources.source()->sampleCount());
   ImGui::BeginDisabled(cursorsDisabled);
   constexpr bool mirrored = false;
   if (iconButton("cursors", Icon::Cursors, shown ? tr("Hide cursors (C)") : tr("Show cursors (C)"),
@@ -625,39 +691,39 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       ImGui::TextDisabled("%s", text);
     }
   };
-  if (waveform == nullptr || waveform->source == nullptr || waveform->source->channelCount() == 0) {
+  if (waveform == nullptr || waveform->sources.source() == nullptr || waveform->sources.source()->channelCount() == 0) {
     const bool problem = waveform != nullptr && !waveform->note.empty();
     centred(problem ? waveform->note.c_str() : tr("No capture yet"), problem, dark);
     ImGui::EndChild();
     return;
   }
 
-  const wv::WaveformSource& source = *waveform->source;
+  const wv::WaveformSource& source = *waveform->sources.source();
   const std::uint32_t channels = source.channelCount();
   const std::uint64_t total = source.sampleCount();
-  const bool live = waveform->shows == SessionWaveform::Shows::Live;
-  const bool idle = waveform->shows == SessionWaveform::Shows::Nothing;
-  const std::uint64_t viewTotal = live   ? wv::liveViewTotal(total, waveform->requestedSamples)
-                                  : idle ? wv::idleViewTotal(waveform->requestedSamples)
+  const bool live = waveform->sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Live;
+  const bool idle = waveform->sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Nothing;
+  const std::uint64_t viewTotal = live   ? wv::liveViewTotal(total, waveform->sources.requestedSamples())
+                                  : idle ? wv::idleViewTotal(waveform->sources.requestedSamples())
                                          : total;
   const auto laneChoice = [&](std::uint32_t lane) -> const wv::ColorChoice& {
     static const wv::ColorChoice kFallback = wv::ColorChoice::palette(0);
-    const std::uint32_t device = lane < waveform->laneDevice.size() ? waveform->laneDevice[lane] : lane;
+    const std::uint32_t device = lane < waveform->sources.laneDevice().size() ? waveform->sources.laneDevice()[lane] : lane;
     if (device < ui.channelColors.size()) {
       return ui.channelColors[device];
     }
     return kFallback;
   };
   const auto laneTrigger = [&](std::uint32_t lane) -> trigger::MatchType* {
-    const std::uint32_t device = lane < waveform->laneDevice.size() ? waveform->laneDevice[lane] : lane;
+    const std::uint32_t device = lane < waveform->sources.laneDevice().size() ? waveform->sources.laneDevice()[lane] : lane;
     if (!ui.settings || device >= ui.settings->trigger.size()) {
       return nullptr;
     }
     return &ui.settings->trigger[device];
   };
   const std::vector<std::uint32_t> visible =
-    ui.settings ? wv::visibleLanes(waveform->laneDevice, ui.settings->channels)
-                : wv::shownLanes(waveform->laneDevice.size(), ui.fileLanesShown);
+    ui.settings ? wv::visibleLanes(waveform->sources.laneDevice(), ui.settings->channels)
+                : wv::shownLanes(waveform->sources.laneDevice().size(), ui.fileLanesShown);
   const float rulerHeight = std::round(em * kRulerEm);
   const float basePitch = std::round(em * kLaneEm);
   const float triggerIconSize = std::round(em * kTriggerIconEm);
@@ -685,7 +751,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     decoderReads[d] = gd::decoderReads(ui.decoders, d);
     const bool readsShownChannel = std::ranges::any_of(decoderReads[d].channels, [&](std::uint32_t device) {
       return std::ranges::any_of(visible, [&](std::uint32_t lane) {
-        return lane < waveform->laneDevice.size() && waveform->laneDevice[lane] == device;
+        return lane < waveform->sources.laneDevice().size() && waveform->sources.laneDevice()[lane] == device;
       });
     });
     hasBracket[d] = readsShownChannel || !decoderReads[d].decoders.empty();
@@ -735,10 +801,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
   const float fullHeight = ImGui::GetContentRegionAvail().y;
   const float scrollbarHeight = style.ScrollbarSize;
   const float lanesHeight = (std::max)(pitch, fullHeight - rulerHeight - scrollbarHeight);
-  ui.laneOrder.sync(waveform->laneDevice, decoderCount);
+  ui.laneOrder.sync(waveform->sources.laneDevice(), decoderCount);
   const bool laneDragging = waveform->laneDrag.dragged.has_value();
   const wv::LaneDisplay allLanes =
-    wv::laneDisplay(ui.laneOrder, waveform->laneDevice, visible, decoderHeights, pitch, lanePad);
+    wv::laneDisplay(ui.laneOrder, waveform->sources.laneDevice(), visible, decoderHeights, pitch, lanePad);
   const wv::LaneDisplay laneDisplay =
     laneDragging ? wv::withoutLane(allLanes, *waveform->laneDrag.dragged) : allLanes;
   const wv::LaneRegions3 regions =
@@ -756,12 +822,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
   }
   wv::Viewport& viewport = *waveform->viewport;
   viewport.setWidthPixels(widthPixels);
-  viewport.setTimeOriginSample(static_cast<std::int64_t>(waveform->timeZero));
+  viewport.setTimeOriginSample(static_cast<std::int64_t>(waveform->sources.timeZero()));
   if (!waveform->fitted) {
     if (live) {
       wv::startLiveView(viewport, waveform->carriedZoom, viewTotal);
     } else if (idle) {
-      wv::fitIdleView(viewport, waveform->requestedSamples);
+      wv::fitIdleView(viewport, waveform->sources.requestedSamples());
     } else {
       viewport.zoomToFit(viewTotal);
     }
@@ -828,6 +894,11 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
                          static_cast<double>(origin.y), static_cast<double>(rulerHeight), size.x, size.y, em);
     return std::make_pair(label, rect);
   };
+  const auto overWidthLabelAt = [&](const wv::CursorPair& pair) {
+    const auto geometry = widthLabelGeometry(pair);
+    return geometry && wv::flagRectContains(geometry->second, static_cast<double>(io.MousePos.x),
+                                            static_cast<double>(io.MousePos.y));
+  };
   const wv::CursorPair cursorsForGrab = waveform->cursors.value_or(wv::CursorPair(0, 0));
   const bool cursorsGrabbable = waveform->showCursors && waveform->cursors.has_value();
   if (ImGui::IsItemActivated() && ImGui::IsMousePosValid()) {
@@ -857,45 +928,24 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const wv::GrabTarget grabbed = wv::rulerPressTarget(
       pressCandidates, static_cast<double>(io.MousePos.x), static_cast<double>(io.MousePos.y),
       static_cast<double>(origin.y), static_cast<double>(origin.y + rulerHeight), markerGrab, lineFallback);
-    waveform->draggedMarker = grabbed.kind == wv::GrabKind::Marker ? std::optional(grabbed.markerId) : std::nullopt;
-    waveform->draggedCursorIndexOrMinusOne = grabbed.kind == wv::GrabKind::CursorFirst    ? 0
-                              : grabbed.kind == wv::GrabKind::CursorSecond ? 1
-                                                                           : -1;
-    waveform->draggedCursorPair = grabbed.kind == wv::GrabKind::CursorPair;
-    if (waveform->draggedCursorPair) {
-      waveform->pairPressPixelX = rulerMouseX;
-      waveform->pairPressCursors = cursorsForGrab;
-    }
+    waveform->grab.begin(grabbed, rulerMouseX, cursorsForGrab);
     waveform->rulerPressDragged = false;
   }
   if (rulerActive && ImGui::IsMousePosValid()) {
-    if (waveform->draggedMarker) {
-      if (waveform->rulerPressDragged || ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, rulerMouseX, total));
-        ui.capture.markViewEdited();
-      }
-    } else if (waveform->draggedCursorPair) {
-      const std::int64_t delta = wv::pairDragDeltaSamples(viewport, waveform->pairPressPixelX, rulerMouseX);
-      waveform->cursors = wv::movePairBySampleDelta(waveform->pairPressCursors, delta, total);
-      ui.capture.markViewEdited();
-    } else if (waveform->draggedCursorIndexOrMinusOne >= 0 && waveform->cursors) {
-      const std::uint64_t at = wv::cursorSampleAtPixel(viewport, rulerMouseX, total);
-      waveform->cursors = waveform->draggedCursorIndexOrMinusOne == 0 ? wv::CursorPair(at, waveform->cursors->second())
-                                                       : wv::CursorPair(waveform->cursors->first(), at);
+    const bool rulerDragged = waveform->rulerPressDragged || ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+    if (waveform->grab.dragTo(waveform->markers, waveform->cursors, viewport, rulerMouseX, total, rulerDragged) ==
+        wv::DragOutcome::Moved) {
       ui.capture.markViewEdited();
     }
   }
   if (rulerActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
     waveform->rulerPressDragged = true;
-    if (waveform->draggedMarker) {
-      waveform->selectedMarker = waveform->draggedMarker;
+    if (waveform->grab.marker()) {
+      waveform->selectedMarker = waveform->grab.marker();
     }
   }
-  if (ImGui::IsItemDeactivated() && !waveform->rulerPressDragged && waveform->draggedCursorIndexOrMinusOne < 0 &&
-      !waveform->draggedCursorPair) {
-    if (waveform->draggedMarker) {
-      waveform->selectedMarker = waveform->draggedMarker;
-    }
+  if (ImGui::IsItemDeactivated() && waveform->grab.selectsMarkerOnRelease(waveform->rulerPressDragged)) {
+    waveform->selectedMarker = waveform->grab.marker();
   }
   if (rulerHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
     if (const auto hit = wv::markerUnderPixel(waveform->markers, viewport, rulerMouseX, markerGrab)) {
@@ -935,17 +985,15 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     overCursorFlag = cursorFlagRect(x0, flagTop, em).Contains(io.MousePos) ||
                     cursorFlagRect(x1, flagTop, em).Contains(io.MousePos);
   }
-  const bool overWidthLabel = false;
   const bool lineHit =
     rulerHovered &&
     wv::grabAtPixel(waveform->markers, cursorsForGrab, cursorsGrabbable, viewport, rulerMouseX, markerGrab)
         .kind != wv::GrabKind::None;
-  if (waveform->draggedMarker || waveform->draggedCursorIndexOrMinusOne >= 0 || waveform->draggedCursorPair) {
+  const wv::PointerShape rulerShape =
+    wv::rulerPointerShape(waveform->grab, hoveredFlag.has_value(), overCursorFlag, lineHit);
+  if (rulerShape == wv::PointerShape::ResizeEW) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-  } else if (wv::hoverCursorFor(hoveredFlag.has_value(), overCursorFlag, lineHit, overWidthLabel) ==
-            wv::HoverCursor::ResizeEW) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-  } else if (hoveredFlag.has_value()) {
+  } else if (rulerShape == wv::PointerShape::Arrow) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
   }
 
@@ -1016,11 +1064,11 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const float chipHeight = std::round(em * 1.15f);
     const float chipRounding = std::round(chipHeight * 0.3f);
     float chipWidth = chipHeight;
-    for (const std::uint32_t device : waveform->laneDevice) {
+    for (const std::uint32_t device : waveform->sources.laneDevice()) {
       chipWidth = (std::max)(chipWidth, std::ceil(ImGui::CalcTextSize(std::to_string(device).c_str()).x + em * 0.5f));
     }
     const auto laneDeviceOf = [&](std::uint32_t lane) {
-      return lane < waveform->laneDevice.size() ? waveform->laneDevice[lane] : lane;
+      return lane < waveform->sources.laneDevice().size() ? waveform->sources.laneDevice()[lane] : lane;
     };
     const auto laneShownName = [&](std::uint32_t lane) {
       return gc::shownChannelName(ui.channelUserNames, ui.channelNames, laneDeviceOf(lane));
@@ -1068,7 +1116,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       const wv::LaneStatus status = wv::decoderLaneStatus(
         state == gd::DecoderLaneState::Decoding, state == gd::DecoderLaneState::Failed,
         ui.decoderAnnotations.drawn(d) != nullptr,
-        progress != nullptr ? std::optional<int>(progress->percent) : std::nullopt);
+        progress != nullptr ? std::optional<int>(progress->percent) : std::nullopt,
+        ui.decodes.laneCaptureMode(ui.running.has_value(), ui.running && gd::liveDecodingAllowed(*ui.running),
+                                   ui.decoderAnnotations.runPositionOf(d)));
       switch (status.kind) {
         case wv::LaneStatusKind::Decoding:
           line.text = std::format("{} - {}", line.text, tr("decoding..."));
@@ -1076,6 +1126,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           break;
         case wv::LaneStatusKind::DecodingPercent:
           line.text = std::format("{} - {}", line.text, trf("decoding {}%", status.percent));
+          line.color = mutedColor;
+          break;
+        case wv::LaneStatusKind::StartsWhenCaptureEnds:
+          line.text = std::format("{} - {}", line.text, tr("decoding starts when capture ends"));
           line.color = mutedColor;
           break;
         case wv::LaneStatusKind::Failed:
@@ -1370,9 +1424,6 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     const float lineGrab = kCursorGrab * scale;
     const bool pointerValid = ImGui::IsMousePosValid();
     if (ImGui::IsItemActivated() && pointerValid) {
-      waveform->draggedCursorIndexOrMinusOne = -1;
-      waveform->draggedCursorPair = false;
-      waveform->draggedMarker.reset();
       waveform->grabbedSample = viewport.pixelToSample(mouseX);
       waveform->tracesPreviousPressDragged = waveform->tracesPressDragged;
       waveform->tracesPressDragged = false;
@@ -1380,49 +1431,25 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       waveform->panPressY = static_cast<double>(io.MousePos.y);
       const wv::GrabTarget grabbed =
         wv::grabAtPixel(waveform->markers, cursorsForGrab, cursorsGrabbable, viewport, mouseX, lineGrab);
-      if (grabbed.kind == wv::GrabKind::Marker) {
-        waveform->draggedMarker = grabbed.markerId;
-      } else if (grabbed.kind == wv::GrabKind::CursorFirst) {
-        waveform->draggedCursorIndexOrMinusOne = 0;
-      } else if (grabbed.kind == wv::GrabKind::CursorSecond) {
-        waveform->draggedCursorIndexOrMinusOne = 1;
-      } else if (cursorsGrabbable) {
-        const auto geometry = widthLabelGeometry(cursorsForGrab);
-        if (geometry && wv::flagRectContains(geometry->second, static_cast<double>(io.MousePos.x),
-                                             static_cast<double>(io.MousePos.y))) {
-          waveform->draggedCursorPair = true;
-          waveform->pairPressPixelX = mouseX;
-          waveform->pairPressCursors = cursorsForGrab;
-        }
-      }
+      waveform->grab.begin(
+        wv::tracesPressTarget(grabbed, cursorsGrabbable, cursorsGrabbable && overWidthLabelAt(cursorsForGrab)), mouseX,
+        cursorsForGrab);
       waveform->tracesPressClicks = ImGui::GetMouseClickedCount(ImGuiMouseButton_Left);
-      waveform->tracesPressOnLine =
-        waveform->draggedMarker.has_value() || waveform->draggedCursorIndexOrMinusOne >= 0 || waveform->draggedCursorPair;
+      waveform->tracesPressOnLine = waveform->grab.active();
     }
-    const std::optional<wv::MarkerId> pressGrabbedMarker = waveform->draggedMarker;
-    const bool pressGrabbedCursor = waveform->draggedCursorIndexOrMinusOne >= 0;
+    const wv::PointerGrab pressGrab = waveform->grab;
     if (tracesActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
       waveform->tracesPressDragged = true;
-      if (pressGrabbedMarker) {
-        waveform->selectedMarker = pressGrabbedMarker;
+      if (pressGrab.marker()) {
+        waveform->selectedMarker = pressGrab.marker();
       }
     }
     if (tracesActive && pointerValid) {
-      if (waveform->draggedMarker) {
-        if (waveform->tracesPressDragged) {
-          waveform->markers.moveTo(*waveform->draggedMarker, wv::cursorSampleAtPixel(viewport, mouseX, total));
-          ui.capture.markViewEdited();
-        }
-      } else if (waveform->draggedCursorPair) {
-        const std::int64_t delta = wv::pairDragDeltaSamples(viewport, waveform->pairPressPixelX, mouseX);
-        waveform->cursors = wv::movePairBySampleDelta(waveform->pairPressCursors, delta, total);
+      const wv::DragOutcome dragged = waveform->grab.dragTo(waveform->markers, waveform->cursors, viewport, mouseX,
+                                                            total, waveform->tracesPressDragged);
+      if (dragged == wv::DragOutcome::Moved) {
         ui.capture.markViewEdited();
-      } else if (waveform->draggedCursorIndexOrMinusOne >= 0 && waveform->cursors) {
-        const std::uint64_t at = wv::cursorSampleAtPixel(viewport, mouseX, total);
-        waveform->cursors = waveform->draggedCursorIndexOrMinusOne == 0 ? wv::CursorPair(at, waveform->cursors->second())
-                                                         : wv::CursorPair(waveform->cursors->first(), at);
-        ui.capture.markViewEdited();
-      } else {
+      } else if (dragged == wv::DragOutcome::NotHeld) {
         const double moved = mouseX - viewport.sampleToPixel(waveform->grabbedSample);
         if (moved != 0.0) {
           wv::applyDrag(viewport, moved, viewTotal);
@@ -1434,14 +1461,10 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     }
     // WHY: Reset shared drag fields only when BOTH ruler and traces are inactive, or one clobbers the other's this frame.
     if (!rulerActive && !tracesActive) {
-      waveform->draggedMarker.reset();
-      waveform->draggedCursorIndexOrMinusOne = -1;
-      waveform->draggedCursorPair = false;
+      waveform->grab.release();
     }
-    if (ImGui::IsItemDeactivated() && !waveform->tracesPressDragged && !pressGrabbedCursor) {
-      if (pressGrabbedMarker) {
-        waveform->selectedMarker = pressGrabbedMarker;
-      }
+    if (ImGui::IsItemDeactivated() && pressGrab.selectsMarkerOnRelease(waveform->tracesPressDragged)) {
+      waveform->selectedMarker = pressGrab.marker();
     }
     if (ImGui::IsItemDeactivated() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
       const float dragThreshold = io.MouseDragThreshold;
@@ -1461,17 +1484,13 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     }
     const wv::GrabTarget hoverGrab =
       wv::grabAtPixel(waveform->markers, cursorsForGrab, cursorsGrabbable, viewport, mouseX, lineGrab);
-    bool overLabel = false;
-    if (tracesHovered && pointerValid && cursorsGrabbable) {
-      if (const auto geometry = widthLabelGeometry(cursorsForGrab)) {
-        overLabel = wv::flagRectContains(geometry->second, static_cast<double>(io.MousePos.x),
-                                         static_cast<double>(io.MousePos.y));
-      }
-    }
-    if ((tracesHovered && (hoverGrab.kind != wv::GrabKind::None || overLabel)) || waveform->draggedCursorIndexOrMinusOne >= 0 ||
-        waveform->draggedMarker || waveform->draggedCursorPair) {
+    const bool overLabel = tracesHovered && pointerValid && cursorsGrabbable && overWidthLabelAt(cursorsForGrab);
+    const wv::PointerShape tracesShape = wv::tracesPointerShape(
+      waveform->grab, tracesHovered && (hoverGrab.kind != wv::GrabKind::None || overLabel),
+      tracesActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left));
+    if (tracesShape == wv::PointerShape::ResizeEW) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    } else if (tracesActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    } else if (tracesShape == wv::PointerShape::Hand) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
     const bool headersHovered = ImGui::IsWindowHovered() && io.MousePos.x < traceLeft;
@@ -1524,6 +1543,8 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       std::string typed;
     };
     std::optional<PendingDecoderRename> pendingDecoderRename;
+    bool rowFormatMenuOpened = false;
+    const bool trimmable = waveform->sources.shows() == gwf::WaveformSourceChain::Shows::Kept;
     if (decoderCount > 0) {
       drawDecoderLane = [&](const ShownLane& shown, bool floating) {
         BITOSCOPE_DRAW_PART(lanePart, frameProbe_, DecoderLanes);
@@ -1705,6 +1726,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
             io.MousePos.y >= laneTop && io.MousePos.y < laneBottom && hoverSlot && laneRows.takesFormat[*hoverSlot] &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
           waveform->rowFormatTarget = std::pair{config.id(), rows[*hoverSlot].id};
+          waveform->trimPoint =
+            trimmable ? std::optional<std::uint64_t>(wv::cursorSampleAtPixel(viewport, mouseX, total)) : std::nullopt;
+          rowFormatMenuOpened = true;
           gui_popup::open("row_format_menu", popupOwner);
         }
         if (tracesHovered && !tracesActive && !laneDragging && ImGui::IsMousePosValid() && io.MousePos.y >= laneTop &&
@@ -1768,6 +1792,12 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
           drawDecoderLane(shown, false);
         }
       }
+    }
+    if (trimmable && !rowFormatMenuOpened && tracesHovered && !tracesActive && !laneDragging && pointerValid &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      waveform->trimPoint = wv::cursorSampleAtPixel(viewport, mouseX, total);
+      waveform->trimHovered.reset();
+      gui_popup::open("trace_menu", popupOwner);
     }
     if (waveform->nameEdit.lane && !nameFieldDrawn) {
       waveform->nameEdit = {};
@@ -1984,6 +2014,20 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         fillPixels(draw, ImVec2(pointerX, y), ImVec2(pointerX + lineWidth, (std::min)(y + dotLength, visibleBottom)),
                    pointerColor);
       }
+      draw->PopClipRect();
+    }
+
+    if (waveform->trimPoint && *waveform->trimPoint <= total) {
+      const float x = columnX(*waveform->trimPoint);
+      draw->PushClipRect(ImVec2(traceLeft, origin.y), ImVec2(traceLeft + traceWidth, visibleBottom),
+                        kIntersectWithCurrentClipRect);
+      const ImU32 deleteColor = ImGui::ColorConvertFloat4ToU32(errorTextColor(dark));
+      if (waveform->trimHovered) {
+        const bool before = *waveform->trimHovered == gc::TrimSide::Before;
+        fillPixels(draw, ImVec2(before ? traceLeft : x, visibleTop),
+                   ImVec2(before ? x : traceLeft + traceWidth, visibleBottom), withAlpha(deleteColor, 0.18f));
+      }
+      verticalLine(x, flagBottomY + 0.5f, visibleBottom, deleteColor, 2.0f * lineWidth);
       draw->PopClipRect();
     }
 
@@ -2341,11 +2385,28 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
     }
     ImGui::EndPopup();
   }
+  bool trimMenuShown = false;
   if (gui_popup::begin("row_format_menu", popupOwner)) {
-    if (!rowFormatItems()) {
+    const bool formats = rowFormatItems();
+    if (waveform->trimPoint) {
+      trimMenuShown = true;
+      if (formats) {
+        ImGui::Separator();
+      }
+      trimMenuItems(sessionId, ui);
+    } else if (!formats) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
+  }
+  if (gui_popup::begin("trace_menu", popupOwner)) {
+    trimMenuShown = true;
+    trimMenuItems(sessionId, ui);
+    ImGui::EndPopup();
+  }
+  if (!trimMenuShown) {
+    waveform->trimPoint.reset();
+    waveform->trimHovered.reset();
   }
   if (gui_popup::begin("marker_context", popupOwner)) {
     if (waveform->contextMarker) {
@@ -2357,6 +2418,11 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
         if (waveform->selectedMarker == id) {
           waveform->selectedMarker.reset();
         }
+      }
+      if (ImGui::MenuItem(tr("Delete all")) && waveform->markers.removeAll()) {
+        waveform->contextMarker.reset();
+        waveform->selectedMarker.reset();
+        ui.capture.markViewEdited();
       }
       if (ImGui::MenuItem(tr("Rename"))) {
         openMarkerRename(*waveform, id, popupOwner);

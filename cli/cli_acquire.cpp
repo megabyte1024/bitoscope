@@ -152,7 +152,7 @@ std::expected<acquisition::AcquireResult, std::string> runAcquire(const CliOptio
     return std::unexpected(ceiling.error());
   }
 
-  auto settings = readAnalyzerSettings(opts.configure, session);
+  auto settings = readAnalyzerSettings(opts.configure, session, seams.err);
   if (!settings) return std::unexpected(settings.error());
 
   acquisition::AcquireRequest request;

@@ -17,8 +17,19 @@ typedef struct bitoscope_stream_item {
   uint32_t kind;
   uint32_t flags;
 } bitoscope_stream_item;
+typedef struct bitoscope_watched_line {
+  uint32_t channel;
+  int edge;
+} bitoscope_watched_line;
+typedef struct bitoscope_line_change {
+  uint64_t at;
+  uint32_t changed;
+  uint32_t before;
+  uint32_t after;
+  uint32_t sampled;
+} bitoscope_line_change;
 typedef struct bitoscope_lua_api {
-  int (*level)(bitoscope_decode_input*, uint32_t, uint64_t);
+  int (*level)(bitoscope_decode_input*, uint32_t, uint64_t, int*);
   int (*next_edge)(bitoscope_decode_input*, uint32_t, uint64_t, int, uint64_t*);
   int (*next_edge_limit)(bitoscope_decode_input*, uint32_t, uint64_t, int, uint64_t, uint64_t*);
   int (*next_change2)(bitoscope_decode_input*, uint32_t, uint32_t, uint64_t, uint64_t*, uint32_t*);
@@ -35,10 +46,14 @@ typedef struct bitoscope_lua_api {
   int (*settle)(bitoscope_annotations*, uint64_t);
   uint64_t (*settle_due)(const bitoscope_annotations*);
   int (*emit_bytes)(bitoscope_annotations*, uint64_t, uint64_t, uint32_t, uint32_t, const uint8_t*, size_t);
+  int (*changes)(bitoscope_decode_input*, const bitoscope_watched_line*, uint32_t, const uint32_t*, uint32_t, uint64_t,
+                 uint32_t, bitoscope_line_change*, uint32_t, uint32_t*);
 } bitoscope_lua_api;
 ]]
 
-local OK, NONE = 0, -3
+local OK, NONE = 0, -200
+local CHANGE_LINES = 32
+local CHANGE_BATCH = 64
 local POSITION_MAX = 9007199254740991
 local U32_MAX = 4294967295
 local NO_LIMIT = ffi.new("uint64_t", -1)
@@ -128,6 +143,7 @@ return function(api, input, annotations, facts, outputs, inputs)
   local last = ffi.new("uint64_t[1]")
   local which = ffi.new("uint32_t[1]")
   local final = ffi.new("int[1]")
+  local level = ffi.new("int[1]")
   local item = ffi.new("bitoscope_stream_item[1]")
   local scratch = ffi.new("uint8_t[?]", 256)
   local scratch_size = 256
@@ -141,8 +157,8 @@ return function(api, input, annotations, facts, outputs, inputs)
                 DATA = 0, BOUNDARY = 1, BEGIN = 2, DAMAGED = 1, NO_MOSI = 2, NO_MISO = 4 }
 
   function sig.level(channel, sample)
-    local r = C.level(inp, u32(channel, "channel", "sig.level"), position(sample, "sample", "sig.level"))
-    if r >= 0 then return r end
+    local r = C.level(inp, u32(channel, "channel", "sig.level"), position(sample, "sample", "sig.level"), level)
+    if r == OK then return level[0] end
     if r == NONE then return nil end
     failed()
   end
@@ -176,6 +192,46 @@ return function(api, input, annotations, facts, outputs, inputs)
     if r == OK then return tonumber(at[0]), tonumber(which[0]) end
     if r == NONE then return nil end
     failed()
+  end
+
+  function sig.changes(spec)
+    local fn = "sig.changes"
+    if type(spec) ~= "table" or type(spec.watch) ~= "table" or #spec.watch < 1 then
+      error("bad argument to sig.changes (table { watch = { { channel, edge }, ... }, sample = { channel, ... } } " ..
+            "expected, with 1 or more watched lines)", 2)
+    end
+    local watch, sample = spec.watch, spec.sample or {}
+    local n, m = #watch, #sample
+    if n + m > CHANGE_LINES then
+      error("bad argument to sig.changes (at most " .. CHANGE_LINES .. " watched and sampled lines together, got " ..
+            n .. " and " .. m .. ")", 2)
+    end
+    local lines = ffi.new("bitoscope_watched_line[?]", n)
+    for i = 1, n do
+      local line = watch[i]
+      lines[i - 1].channel = u32(line[1], "watch[" .. i .. "] channel", fn)
+      lines[i - 1].edge = line[2] == nil and sig.ANY or kind(line[2], "watch[" .. i .. "] edge", fn)
+    end
+    local sampled = ffi.new("uint32_t[?]", m)
+    for j = 1, m do sampled[j - 1] = u32(sample[j], "sample[" .. j .. "]", fn) end
+    local batch = ffi.new("bitoscope_line_change[?]", CHANGE_BATCH)
+    local got = ffi.new("uint32_t[1]")
+    local shift = 2 ^ n
+    local index, count, from, previous, finished = 0, 0, 0, 0, false
+    return function()
+      if index >= count then
+        if finished then return nil end
+        if C.changes(inp, lines, n, sampled, m, from, previous, batch, CHANGE_BATCH, got) ~= OK then failed() end
+        index, count = 0, got[0]
+        finished = count < CHANGE_BATCH
+        if count == 0 then return nil end
+        local last = batch[count - 1]
+        from, previous = tonumber(last.at) + 1, last.after
+      end
+      local change = batch[index]
+      index = index + 1
+      return tonumber(change.at), change.changed, change.after + change.sampled * shift
+    end
   end
 
   function sig.bits(channel, first, n)

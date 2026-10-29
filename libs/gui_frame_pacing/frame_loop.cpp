@@ -4,15 +4,14 @@
 
 #include "frame_loop.h"
 
-namespace bitoscope::gui_linux {
+namespace bitoscope::gui_frame_pacing {
 
-using gui_frame_pacing::FrameDecision;
-using gui_frame_pacing::FramePacingInput;
-using gui_frame_pacing::WindowVisibility;
-
-WindowVisibility windowVisibility(bool iconified, int framebufferWidth, int framebufferHeight) {
+WindowVisibility windowVisibility(bool iconified, bool occluded, int framebufferWidth, int framebufferHeight) {
   if (iconified || framebufferWidth <= 0 || framebufferHeight <= 0) {
     return WindowVisibility::Minimized;
+  }
+  if (occluded) {
+    return WindowVisibility::Occluded;
   }
   return WindowVisibility::Visible;
 }
@@ -20,19 +19,20 @@ WindowVisibility windowVisibility(bool iconified, int framebufferWidth, int fram
 FramePacingInput framePacingInput(const WindowObservation& window, const AppObservation& app, int lastDrawnWidth,
                                   int lastDrawnHeight) {
   FramePacingInput input;
-  input.window = windowVisibility(window.iconified, window.framebufferWidth, window.framebufferHeight);
+  input.window = windowVisibility(window.iconified, window.occluded, window.framebufferWidth, window.framebufferHeight);
   input.reduceIdleFrameRate = app.reduceIdleFrameRate;
   input.inputSeen = window.eventsHandled || window.testHookBusy;
   input.backgroundChanged = app.backgroundChanged;
   input.windowChanged = window.changePending || window.framebufferWidth != lastDrawnWidth ||
                         window.framebufferHeight != lastDrawnHeight;
   input.captureRunning = app.captureRunning;
+  input.captureAdvanced = app.captureAdvanced;
   input.asyncWorkInFlight = app.asyncWorkInFlight;
   input.uiNeedsMore = app.uiNeedsMore;
   return input;
 }
 
-int runFrameLoop(const FrameLoopHooks& hooks, gui_frame_pacing::FramePacer& pacer) {
+int runFrameLoop(const FrameLoopHooks& hooks, FramePacer& pacer) {
   int lastDrawnWidth = 0;
   int lastDrawnHeight = 0;
   for (;;) {

@@ -80,7 +80,8 @@ PreparedJob::PreparedJob(uint64_t jobId, const DecoderRegistration& registration
       decoder(&registration),
       declaredOutputs(std::move(jobOutputs)),
       declaredInputs(std::move(jobInputs)),
-      totalSamples(setup.facts.totalSamples) {
+      totalSamples(setup.facts.totalSamples),
+      totalIsBound(setup.facts.totalIsBound) {
   for (const dec::ChannelBinding& b : setup.channels) channelNames.push_back(b.name);
   for (size_t i = 0; i < setup.channels.size(); ++i) {
     channels.push_back({channelNames[i].c_str(), static_cast<uint32_t>(i), setup.channels[i].channel});
@@ -102,6 +103,7 @@ PreparedJob::PreparedJob(uint64_t jobId, const DecoderRegistration& registration
   c.sample_rate_milli_hz = setup.facts.sampleRateMilliHz;
   c.capture_channels = setup.facts.channelCount;
   c.total_samples = setup.facts.totalSamples;
+  c.total_is_bound = setup.facts.totalIsBound ? 1 : 0;
   c.progress_step = setup.progressStep;
   c.outputs = outputs.empty() ? nullptr : outputs.data();
   c.num_outputs = outputs.size();
@@ -171,7 +173,8 @@ std::expected<std::unique_ptr<PreparedJob>, std::string> prepareJob(std::span<co
   }
   job = std::make_unique<PreparedJob>(id, *found, setup, declared.resolvedOptions(), std::move(jobOutputs),
                                       std::move(jobInputs));
-  const decode::CaptureFacts facts{setup.facts.sampleRateMilliHz, setup.facts.channelCount, setup.facts.totalSamples};
+  const decode::CaptureFacts facts{setup.facts.sampleRateMilliHz, setup.facts.channelCount, setup.facts.totalSamples,
+                                   setup.facts.totalIsBound};
   if (auto checked = declared.checkCapture(facts); !checked) return std::unexpected(std::move(checked.error()));
   return job;
 }
@@ -231,9 +234,13 @@ void decodePrepared(PreparedJob& job, bitoscope_decode_input& in, bitoscope_anno
       in.fail(prefix + "decode function returned " + std::to_string(status) + " without saying why");
     }
     if (!in.failed()) (void)out.finish();
-    if (!in.failed() && in.drain() && job.totalSamples != 0 && in.arrived() != job.totalSamples) {
-      in.failIntegrity("host's stream ended after " + std::to_string(in.arrived()) +
-                       " samples; job's capture has " + std::to_string(job.totalSamples));
+    if (!in.failed() && in.drain()) {
+      if (!job.totalIsBound && job.totalSamples != 0 && in.arrived() != job.totalSamples) {
+        in.failIntegrity("host's stream ended after " + std::to_string(in.arrived()) +
+                         " samples; job's capture has " + std::to_string(job.totalSamples));
+      } else {
+        (void)out.itemsEndWithin(in.arrived());
+      }
     }
     if (!in.failed()) (void)out.markEnd(in.arrived());
   } catch (...) {
@@ -245,7 +252,7 @@ void decodePrepared(PreparedJob& job, bitoscope_decode_input& in, bitoscope_anno
 
 extern "C" {
 
-int bitoscope_reply_look_ahead(bitoscope_reply* reply, uint64_t samples) {
+int bitoscope_reply_look_ahead_samples(bitoscope_reply* reply, uint64_t samples) {
   if (reply == nullptr) return BITOSCOPE_ERROR;
   bitoscope::plugin_c_sdk::tLookAhead = {reply, samples};
   return BITOSCOPE_OK;

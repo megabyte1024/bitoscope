@@ -20,7 +20,7 @@ namespace bitoscope::gui_decode {
 struct ByteRow {
   std::uint32_t row = 0;
   std::vector<std::size_t> groups;
-  std::vector<std::size_t> splits;
+  std::vector<std::size_t> splits{};
   bool operator==(const ByteRow&) const = default;
 };
 

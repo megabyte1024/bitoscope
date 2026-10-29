@@ -12,6 +12,7 @@ namespace bitoscope::waveform_view {
 std::optional<PulseMeasurement> measurePulse(const WaveformSource& source, const Viewport& viewport,
                                               uint32_t channel, uint64_t sample) {
   if (channel >= source.channelCount() || sample >= source.sampleCount()) return std::nullopt;
+  if (sample < source.summaryPendingBefore()) return std::nullopt;
 
   const std::optional<uint64_t> e0 = source.previousEdge(channel, sample);
   if (!e0.has_value()) return std::nullopt;

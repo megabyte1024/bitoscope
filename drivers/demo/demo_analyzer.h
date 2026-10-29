@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -17,6 +16,7 @@
 #include <vector>
 
 #include "bitoscope_driver_cpp.h"
+#include "counter_signals.h"
 #include "demo_config.h"
 #include "demo_stream.h"
 #include "pattern_signals.h"
@@ -39,8 +39,7 @@ std::vector<bitoscope::plugin::PropertyNode> demoProperties();
 
 bitoscope::plugin::LogicAnalyzerInfo demoAnalyzerInfo();
 
-std::expected<bitoscope::sim::DemoFacetConfig, std::string> demoConfigFrom(
-    const std::map<std::string, bitoscope::plugin::PropertyValue, std::less<>>& values);
+std::expected<bitoscope::sim::DemoFacetConfig, std::string> demoConfigFrom(const bitoscope::plugin::Capture& capture);
 
 class DemoAnalyzer final : public bitoscope::plugin::LogicAnalyzer {
  public:
@@ -52,7 +51,8 @@ class DemoAnalyzer final : public bitoscope::plugin::LogicAnalyzer {
                                            bitoscope::plugin::Sink& sink) override;
 
  private:
-  using Stream = std::variant<bitoscope::sim::DemoStream, bitoscope::sim::RandomStream, bitoscope::sim::PatternStream>;
+  using Stream = std::variant<bitoscope::sim::DemoStream, bitoscope::sim::RandomStream, bitoscope::sim::PatternStream,
+                              bitoscope::sim::CounterStream>;
 
   enum class Written { more, last, failed };
 

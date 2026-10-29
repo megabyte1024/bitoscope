@@ -63,7 +63,7 @@ bool outsideLimits(const bitoscope_decoder_option& o, const std::string& value) 
   const char* end = value.data() + value.size();
   const auto parsed = std::from_chars(value.data(), end, number);
   if (parsed.ec != std::errc() || parsed.ptr != end) return false;
-  return (o.has_minimum != 0 && number < o.minimum) || (o.has_maximum != 0 && number > o.maximum);
+  return (o.has_min != 0 && number < o.min) || (o.has_max != 0 && number > o.max);
 }
 
 }
@@ -103,7 +103,7 @@ std::expected<dec::DecoderInfo, std::string> declarationOf(const bitoscope_decod
   if (missing(d.channels, d.num_channels)) return refuse("channels missing");
   for (size_t i = 0; i < d.num_channels; ++i) {
     const bitoscope_decoder_channel& c = d.channels[i];
-    dec::ChannelSpec channel{text(c.name), prose(c.description), c.required != 0, displayOfItem(c.display)};
+    dec::ChannelSpec channel{text(c.name), prose(c.description), c.optional == 0, displayOfItem(c.display)};
     if (channel.name.empty()) return refuse("channel needs name (user binds it by name)");
     for (const dec::ChannelSpec& other : info.channels) {
       if (other.name == channel.name) return refuse("channel " + inQuotes(channel.name) + " is declared twice");
@@ -125,7 +125,7 @@ std::expected<dec::DecoderInfo, std::string> declarationOf(const bitoscope_decod
     input.description = prose(in.description);
     input.type = *type;
     input.width = in.width;
-    input.required = in.required != 0;
+    input.required = in.optional == 0;
     input.display = displayOfItem(in.display);
     info.inputs.push_back(std::move(input));
   }
@@ -187,12 +187,12 @@ std::expected<dec::DecoderInfo, std::string> declarationOf(const bitoscope_decod
     for (size_t k = 0; k < o.num_unsupported_values; ++k) {
       option.unsupportedValues.push_back(text(o.unsupported_values[k]));
     }
-    if ((o.has_minimum != 0 || o.has_maximum != 0) && option.type != dec::OptionType::integer) {
+    if ((o.has_min != 0 || o.has_max != 0) && option.type != dec::OptionType::integer) {
       return refuse("option " + name + " has limits, but only integer option can have them");
     }
-    if (o.has_minimum != 0 && o.has_maximum != 0 && o.minimum > o.maximum) {
-      return refuse("option " + name + "'s minimum " + std::to_string(o.minimum) + " is above its maximum " +
-                    std::to_string(o.maximum));
+    if (o.has_min != 0 && o.has_max != 0 && o.min > o.max) {
+      return refuse("option " + name + "'s minimum " + std::to_string(o.min) + " is above its maximum " +
+                    std::to_string(o.max));
     }
     const auto listed = [&option](const std::vector<std::string>& values) {
       return std::find(values.begin(), values.end(), option.defaultValue) != values.end();
@@ -207,8 +207,8 @@ std::expected<dec::DecoderInfo, std::string> declarationOf(const bitoscope_decod
       return refuse("option " + name + "'s default " + inQuotes(option.defaultValue) +
                     " is one of its unsupported values");
     }
-    option.min = o.has_minimum != 0 ? dec::Limit{o.minimum} : dec::Limit{dec::Unbounded{}};
-    option.max = o.has_maximum != 0 ? dec::Limit{o.maximum} : dec::Limit{dec::Unbounded{}};
+    option.min = o.has_min != 0 ? dec::Limit{o.min} : dec::Limit{dec::Unbounded{}};
+    option.max = o.has_max != 0 ? dec::Limit{o.max} : dec::Limit{dec::Unbounded{}};
     info.options.push_back(std::move(option));
   }
   const auto findOption = [&info](const std::string& name) -> const dec::OptionSpec* {
@@ -484,6 +484,18 @@ const char* bitoscope_find_job_option(const bitoscope_decode_job* job, const cha
     if (job->options[i].name != nullptr && std::strcmp(job->options[i].name, name) == 0) return job->options[i].value;
   }
   return nullptr;
+}
+
+int bitoscope_find_job_option_int(const bitoscope_decode_job* job, const char* name, int64_t* value) {
+  if (value == nullptr) return BITOSCOPE_ERROR;
+  const char* text = bitoscope_find_job_option(job, name);
+  if (text == nullptr) return job == nullptr || name == nullptr ? BITOSCOPE_ERROR : BITOSCOPE_NONE;
+  int64_t parsed = 0;
+  const char* end = text + std::strlen(text);
+  const auto r = std::from_chars(text, end, parsed);
+  if (text == end || r.ec != std::errc() || r.ptr != end) return BITOSCOPE_ERROR;
+  *value = parsed;
+  return BITOSCOPE_OK;
 }
 
 int bitoscope_input_bound(const bitoscope_decode_job* job, const char* name, uint32_t* index) {

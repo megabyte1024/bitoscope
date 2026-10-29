@@ -4,6 +4,7 @@
 add_library(bitoscope_decoder_host STATIC
     decoder_plugin_client.cpp
     decoder_plugin_pool.cpp
+    growing_capture.cpp
     item_feed.cpp
     pacing_policy.cpp
     pacing_policy.h

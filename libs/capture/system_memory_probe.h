@@ -6,10 +6,13 @@
 
 // WHY: Reports the OS 'available' figure, cache included: a free-list-only figure refuses nearly every Linux capture.
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <string>
 
+#include "cgroup_memory_limit.h"
 #include "memory_probe.h"
 
 #if defined(_WIN32)
@@ -23,6 +26,7 @@
 #elif defined(__linux__)
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #endif
 
 namespace bitoscope::capture {
@@ -57,16 +61,21 @@ using SystemMemoryProbe = WindowsMemoryProbe;
 
 class LinuxMemoryProbe final : public MemoryProbe {
  public:
+  explicit LinuxMemoryProbe(std::filesystem::path root = "/") : root_(std::move(root)) {}
+
   std::expected<uint64_t, std::string> freePhysicalBytes() override {
-    return readKiB("MemAvailable:");
+    auto available = readKiB("MemAvailable:");
+    if (!available) return available;
+    if (const auto limited = cgroupAvailableBytes(root_)) return (std::min)(*available, *limited);
+    return available;
   }
   std::expected<uint64_t, std::string> totalPhysicalBytes() override {
     return readKiB("MemTotal:");
   }
 
  private:
-  static std::expected<uint64_t, std::string> readKiB(const char* key) {
-    std::FILE* file = std::fopen("/proc/meminfo", "r");
+  std::expected<uint64_t, std::string> readKiB(const char* key) const {
+    std::FILE* file = std::fopen((root_ / "proc/meminfo").c_str(), "r");
     if (file == nullptr) return std::unexpected("cannot open /proc/meminfo");
     char line[256];
     std::expected<uint64_t, std::string> result =
@@ -85,6 +94,8 @@ class LinuxMemoryProbe final : public MemoryProbe {
     std::fclose(file);
     return result;
   }
+
+  std::filesystem::path root_;
 };
 
 using SystemMemoryProbe = LinuxMemoryProbe;

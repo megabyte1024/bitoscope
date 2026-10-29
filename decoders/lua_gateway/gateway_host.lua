@@ -44,18 +44,49 @@ local function whole(x, low, high)
   return type(x) == "number" and x == floor(x) and x >= low and x < high
 end
 
-local function keys(t, allowed, where)
-  for k in pairs(t) do
-    if type(k) ~= "string" or not allowed[k] then
-      fail(where, "unknown field '" .. tostring(k) .. "'")
-    end
-  end
-end
-
 local function set(list)
   local s = {}
   for _, k in ipairs(list) do s[k] = true end
   return s
+end
+
+local DECLARATION_KEYS = set({ "name", "version", "channels", "inputs", "outputs", "options", "unsupported_options",
+                               "classes", "rows", "row_sources", "allows_shared_channels", "check",
+                               "look_ahead_samples", "decode", "display", "abbreviations", "protocols" })
+local CHANNEL_KEYS = set({ "name", "description", "optional", "display" })
+local INPUT_KEYS = set({ "name", "description", "type", "width", "optional", "display" })
+local OUTPUT_KEYS = set({ "name", "description", "type", "width", "width_option", "requires_channel", "display",
+                          "carries", "carries_input" })
+local OPTION_KEYS = set({ "name", "description", "type", "default_value", "allowed_values", "min", "max",
+                          "unsupported_values", "display" })
+local CLASS_KEYS = set({ "id", "name", "format", "hex_digits", "hex_digits_option", "role" })
+local ROW_KEYS = set({ "id", "name" })
+local ROW_SOURCE_KEYS = set({ "row", "cls", "source_row", "source_classes", "enable_option", "grid", "edges",
+                              "word_list" })
+local GRID_KEYS = set({ "rate_option", "offset_bits", "count_option", "order_option" })
+local EDGES_KEYS = set({ "clock_channel", "data_channel", "count_option", "count" })
+local ABBREVIATION_KEYS = set({ "upper", "shown", "also_word" })
+
+local FORMER = {
+  default = "default_value", values = "allowed_values", digits = "hex_digits", digits_option = "hex_digits_option",
+  channel = "requires_channel", clock = "clock_channel", data = "data_channel", enable = "enable_option",
+  class = "cls", classes = "source_classes", check_capture = "check", look_ahead = "look_ahead_samples",
+}
+
+local function keys(t, allowed, where)
+  for k in pairs(t) do
+    if type(k) ~= "string" or not allowed[k] then
+      local unknown = "unknown field '" .. tostring(k) .. "'"
+      if k == "required" and allowed.optional then
+        fail(where, unknown .. ": channel or input is required unless it says 'optional = true'")
+      elseif k == "source" and allowed == ROW_KEYS then
+        fail(where, unknown .. ": row sources go in 'row_sources' beside 'rows'")
+      elseif FORMER[k] ~= nil and allowed[FORMER[k]] then
+        fail(where, unknown .. ": it is '" .. FORMER[k] .. "' now")
+      end
+      fail(where, unknown)
+    end
+  end
 end
 
 local function text(t, key, where, required)
@@ -134,22 +165,25 @@ local function width_of(t, where)
   return v
 end
 
-local function outputs_of(decl)
+local function outputs_of(decl, decoder_name)
   local out = {}
   for i, v in ipairs(list(decl, "outputs", "declaration", false)) do
     local where = "outputs[" .. i .. "]"
     local o = entry(v, where)
-    keys(o, set({ "name", "description", "type", "width", "width_option", "channel", "display", "carries",
-                  "carries_input" }), where)
+    keys(o, OUTPUT_KEYS, where)
     local r = { name = text(o, "name", where, true), description = text(o, "description", where, false) or "",
                 display = text(o, "display", where, false) or "",
                 type = stream_type(o, where), width = width_of(o, where),
-                width_option = text(o, "width_option", where, false), channel = text(o, "channel", where, false),
+                width_option = text(o, "width_option", where, false),
+                requires_channel = text(o, "requires_channel", where, false),
                 carries = text(o, "carries", where, false),
                 carries_input = text(o, "carries_input", where, false) }
     if rawget(o, "width") ~= nil and r.width_option ~= nil then
       fail(where, "'width' and 'width_option' are both given; output takes one")
     end
+    local named = "decoder \"" .. decoder_name .. "\""
+    if r.carries == "" then fail(named, "output \"" .. r.name .. "\" carries protocol with no name") end
+    if r.carries_input == "" then fail(named, "output \"" .. r.name .. "\" passes through input with no name") end
     out[i] = r
   end
   return out
@@ -160,10 +194,10 @@ local function inputs_of(decl)
   for i, v in ipairs(list(decl, "inputs", "declaration", false)) do
     local where = "inputs[" .. i .. "]"
     local o = entry(v, where)
-    keys(o, set({ "name", "description", "type", "width", "required", "display" }), where)
+    keys(o, INPUT_KEYS, where)
     out[i] = { name = text(o, "name", where, true), description = text(o, "description", where, false) or "",
                display = text(o, "display", where, false) or "",
-               type = stream_type(o, where), width = width_of(o, where), required = flag(o, "required", where) }
+               type = stream_type(o, where), width = width_of(o, where), optional = flag(o, "optional", where) }
   end
   return out
 end
@@ -177,50 +211,53 @@ local function whole_or_zero(t, key, where)
   return v
 end
 
-local function row_source_of(row_id, v, where)
-  local s = entry(v, where)
-  keys(s, set({ "row", "classes", "class", "enable", "grid", "edges", "word_list" }), where)
-  local r = { row = row_id, source_row = id(s, "row", where), source_classes = {}, rate_option = "", offset_bits = 0,
-              count_option = "", order_option = "", clock = "", data = "", count = 0 }
-  if rawget(s, "classes") == nil then fail(where, "'classes' is missing") end
-  for j, c in ipairs(list(s, "classes", where, false)) do
-    if not whole(c, 0, U32) then fail(where, "classes[" .. j .. "] must be whole number from 0 to 2^32 - 1") end
-    r.source_classes[j] = c
-  end
-  r.cls = id(s, "class", where)
-  r.enable = text(s, "enable", where, false) or ""
-  local given = 0
-  for _, k in ipairs({ "grid", "edges", "word_list" }) do
-    if rawget(s, k) ~= nil then given = given + 1 end
-  end
-  if given == 0 then fail(where, "needs one of 'grid', 'edges' and 'word_list'") end
-  if given > 1 then fail(where, "has more than one of 'grid', 'edges' and 'word_list'") end
-  if rawget(s, "word_list") ~= nil then
-    if rawget(s, "word_list") ~= true then fail(where, "'word_list' must be true") end
-    r.rule = ROW_RULE_WORD_LIST
-  elseif rawget(s, "grid") ~= nil then
-    local at = where .. ".grid"
-    local g = entry(rawget(s, "grid"), at)
-    keys(g, set({ "rate_option", "offset_bits", "count_option", "order_option" }), at)
-    r.rule = ROW_RULE_BIT_GRID
-    r.rate_option = text(g, "rate_option", at, true)
-    r.offset_bits = whole_or_zero(g, "offset_bits", at)
-    r.count_option = text(g, "count_option", at, true)
-    r.order_option = text(g, "order_option", at, true)
-  else
-    local at = where .. ".edges"
-    local e = entry(rawget(s, "edges"), at)
-    keys(e, set({ "clock", "data", "count_option", "count" }), at)
-    r.rule = ROW_RULE_CLOCK_EDGES
-    r.clock = text(e, "clock", at, true)
-    r.data = text(e, "data", at, true)
-    if rawget(e, "count") ~= nil and rawget(e, "count_option") ~= nil then
-      fail(at, "'count' and 'count_option' are both given; edges take one")
+local function row_sources_of(decl)
+  local out = {}
+  for i, v in ipairs(list(decl, "row_sources", "declaration", false)) do
+    local where = "row_sources[" .. i .. "]"
+    local s = entry(v, where)
+    keys(s, ROW_SOURCE_KEYS, where)
+    local r = { row = id(s, "row", where), cls = id(s, "cls", where), source_row = id(s, "source_row", where),
+                source_classes = {}, grid = {}, edges = {} }
+    if rawget(s, "source_classes") == nil then fail(where, "'source_classes' is missing") end
+    for j, c in ipairs(list(s, "source_classes", where, false)) do
+      if not whole(c, 0, U32) then
+        fail(where, "source_classes[" .. j .. "] must be whole number from 0 to 2^32 - 1")
+      end
+      r.source_classes[j] = c
     end
-    r.count_option = text(e, "count_option", at, false) or ""
-    r.count = whole_or_zero(e, "count", at)
+    r.enable_option = text(s, "enable_option", where, false) or ""
+    local given = 0
+    for _, k in ipairs({ "grid", "edges", "word_list" }) do
+      if rawget(s, k) ~= nil then given = given + 1 end
+    end
+    if given == 0 then fail(where, "needs one of 'grid', 'edges' and 'word_list'") end
+    if given > 1 then fail(where, "has more than one of 'grid', 'edges' and 'word_list'") end
+    if rawget(s, "word_list") ~= nil then
+      if rawget(s, "word_list") ~= true then fail(where, "'word_list' must be true") end
+      r.rule = ROW_RULE_WORD_LIST
+    elseif rawget(s, "grid") ~= nil then
+      local at = where .. ".grid"
+      local g = entry(rawget(s, "grid"), at)
+      keys(g, GRID_KEYS, at)
+      r.rule = ROW_RULE_BIT_GRID
+      r.grid = { rate_option = text(g, "rate_option", at, true), offset_bits = whole_or_zero(g, "offset_bits", at),
+                 count_option = text(g, "count_option", at, true), order_option = text(g, "order_option", at, true) }
+    else
+      local at = where .. ".edges"
+      local e = entry(rawget(s, "edges"), at)
+      keys(e, EDGES_KEYS, at)
+      r.rule = ROW_RULE_CLOCK_EDGES
+      r.edges = { clock_channel = text(e, "clock_channel", at, true), data_channel = text(e, "data_channel", at, true) }
+      if rawget(e, "count") ~= nil and rawget(e, "count_option") ~= nil then
+        fail(at, "'count' and 'count_option' are both given; edges take one")
+      end
+      r.edges.count_option = text(e, "count_option", at, false) or ""
+      r.edges.count = whole_or_zero(e, "count", at)
+    end
+    out[i] = r
   end
-  return r
+  return out
 end
 
 local function options_of(decl)
@@ -228,8 +265,7 @@ local function options_of(decl)
   for i, v in ipairs(list(decl, "options", "options", false)) do
     local where = "options[" .. i .. "]"
     local o = entry(v, where)
-    keys(o, set({ "name", "description", "type", "default", "values", "min", "max", "unsupported_values", "display" }),
-         where)
+    keys(o, OPTION_KEYS, where)
     local name = text(o, "name", where, true)
     where = "option '" .. name .. "'"
     local kind = text(o, "type", where, true)
@@ -237,7 +273,7 @@ local function options_of(decl)
       fail(where, "'type' must be \"string\" or \"integer\", not \"" .. kind .. "\"")
     end
     local r = { name = name, description = text(o, "description", where, false) or "", type = kind,
-                display = text(o, "display", where, false) or "", values = {}, unsupported_values = {} }
+                display = text(o, "display", where, false) or "", allowed_values = {}, unsupported_values = {} }
     local function value(x, what)
       if kind == "string" then
         if type(x) ~= "string" then fail(where, what .. " must be string, not " .. type(x)) end
@@ -245,9 +281,11 @@ local function options_of(decl)
       end
       return integer_text(x, where, what)
     end
-    if rawget(o, "default") == nil then fail(where, "'default' is missing") end
-    r.default = value(rawget(o, "default"), "'default'")
-    for j, x in ipairs(list(o, "values", where, false)) do r.values[j] = value(x, "values[" .. j .. "]") end
+    if rawget(o, "default_value") == nil then fail(where, "'default_value' is missing") end
+    r.default_value = value(rawget(o, "default_value"), "'default_value'")
+    for j, x in ipairs(list(o, "allowed_values", where, false)) do
+      r.allowed_values[j] = value(x, "allowed_values[" .. j .. "]")
+    end
     for j, x in ipairs(list(o, "unsupported_values", where, false)) do
       r.unsupported_values[j] = value(x, "unsupported_values[" .. j .. "]")
     end
@@ -270,7 +308,7 @@ local function abbreviations_of(decl)
     if type(v) == "string" then
       out[i] = { upper = v, shown = "", also_word = false }
     elseif type(v) == "table" then
-      keys(v, set({ "upper", "shown", "also_word" }), where)
+      keys(v, ABBREVIATION_KEYS, where)
       out[i] = { upper = text(v, "upper", where, true), shown = text(v, "shown", where, false) or "",
                  also_word = flag(v, "also_word", where) }
     else
@@ -282,10 +320,7 @@ end
 
 local function normalize(decl)
   if type(decl) ~= "table" then fail("declaration", "must be table, not " .. type(decl)) end
-  keys(decl, set({ "name", "version", "channels", "inputs", "outputs", "options", "unsupported_options", "classes",
-                   "rows", "allows_shared_channels", "check_capture", "look_ahead", "decode", "display",
-                   "abbreviations", "protocols" }),
-       "declaration")
+  keys(decl, DECLARATION_KEYS, "declaration")
   local d = { name = text(decl, "name", "declaration", true) }
   d.version = text(decl, "version", "declaration", false)
   d.display = text(decl, "display", "declaration", false) or ""
@@ -295,13 +330,13 @@ local function normalize(decl)
   for i, v in ipairs(list(decl, "channels", "declaration", false)) do
     local where = "channels[" .. i .. "]"
     local c = entry(v, where)
-    keys(c, set({ "name", "description", "required", "display" }), where)
+    keys(c, CHANNEL_KEYS, where)
     d.channels[i] = { name = text(c, "name", where, true), description = text(c, "description", where, false) or "",
-                      required = flag(c, "required", where), display = text(c, "display", where, false) or "" }
+                      optional = flag(c, "optional", where), display = text(c, "display", where, false) or "" }
   end
 
   d.inputs = inputs_of(decl)
-  d.outputs = outputs_of(decl)
+  d.outputs = outputs_of(decl, d.name)
 
   d.options = options_of(decl)
 
@@ -323,7 +358,7 @@ local function normalize(decl)
   for i, v in ipairs(list(decl, "classes", "declaration", true)) do
     local where = "classes[" .. i .. "]"
     local c = entry(v, where)
-    keys(c, set({ "id", "name", "format", "digits", "digits_option", "role" }), where)
+    keys(c, CLASS_KEYS, where)
     local r = { id = id(c, "id", where), name = text(c, "name", where, false) or "" }
     local f = text(c, "format", where, false) or "none"
     r.format = FORMATS[f]
@@ -331,15 +366,15 @@ local function normalize(decl)
       fail(where, "'format' must be \"none\", \"hex\", \"address7\", \"n_of_m\", \"decimal\", \"n_of_m_bytes\" or "
            .. "\"bytes\", not \"" .. f .. "\"")
     end
-    local digits = rawget(c, "digits")
+    local digits = rawget(c, "hex_digits")
     if digits ~= nil then
-      if f ~= "hex" then fail(where, "'digits' is for \"hex\" class") end
-      if not whole(digits, 0, 17) then fail(where, "'digits' must be whole number from 0 to 16") end
+      if f ~= "hex" then fail(where, "'hex_digits' is for \"hex\" class") end
+      if not whole(digits, 0, 17) then fail(where, "'hex_digits' must be whole number from 0 to 16") end
     end
-    r.digits = digits or 0
-    local digits_option = text(c, "digits_option", where, false)
-    if digits_option ~= nil and f ~= "hex" then fail(where, "'digits_option' is for \"hex\" class") end
-    r.digits_option = digits_option
+    r.hex_digits = digits or 0
+    local digits_option = text(c, "hex_digits_option", where, false)
+    if digits_option ~= nil and f ~= "hex" then fail(where, "'hex_digits_option' is for \"hex\" class") end
+    r.hex_digits_option = digits_option
     local role = text(c, "role", where, false) or "none"
     r.role = ROLES[role]
     if r.role == nil then
@@ -350,29 +385,21 @@ local function normalize(decl)
   end
 
   d.rows = {}
-  d.row_sources = {}
   for i, v in ipairs(list(decl, "rows", "declaration", true)) do
     local where = "rows[" .. i .. "]"
     local c = entry(v, where)
-    keys(c, set({ "id", "name", "source" }), where)
-    local r = { id = id(c, "id", where), name = text(c, "name", where, true) }
-    d.rows[i] = r
-    if rawget(c, "source") ~= nil then
-      d.row_sources[#d.row_sources + 1] = row_source_of(r.id, rawget(c, "source"), where .. ".source")
-    end
+    keys(c, ROW_KEYS, where)
+    d.rows[i] = { id = id(c, "id", where), name = text(c, "name", where, true) }
   end
+  d.row_sources = row_sources_of(decl)
 
   d.allows_shared_channels = flag(decl, "allows_shared_channels", "declaration")
 
   d.decode = rawget(decl, "decode")
   if type(d.decode) ~= "function" then fail("declaration", "'decode' must be function") end
-  d.check_capture = rawget(decl, "check_capture")
-  if d.check_capture ~= nil and type(d.check_capture) ~= "function" then
-    fail("declaration", "'check_capture' must be function")
-  end
-  d.look_ahead = rawget(decl, "look_ahead")
-  if d.look_ahead ~= nil and type(d.look_ahead) ~= "function" then
-    fail("declaration", "'look_ahead' must be function")
+  for _, key in ipairs({ "check", "look_ahead_samples" }) do
+    d[key] = rawget(decl, key)
+    if d[key] ~= nil and type(d[key]) ~= "function" then fail("declaration", "'" .. key .. "' must be function") end
   end
   return d
 end

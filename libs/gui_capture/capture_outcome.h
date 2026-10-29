@@ -35,6 +35,7 @@ struct CaptureOutcome {
 
   std::shared_ptr<const bitoscope::capture::RawCaptureBuffer> buffer;
   bitoscope::capture::CaptureExtent extent;
+  bool trimmed = false;
   std::optional<uint64_t> originSampleIndex;
   std::optional<uint64_t> triggerSampleIndex;
   std::optional<uint64_t> requestedPreTriggerSamples;

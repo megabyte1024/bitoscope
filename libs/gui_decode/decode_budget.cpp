@@ -10,8 +10,11 @@
 #include <new>
 #include <utility>
 
+#include "capture_plan.h"
+#include "capture_session.h"
 #include "decoder_labels.h"
 #include "derivation_context.h"
+#include "memory_probe.h"
 #include "spec_display.h"
 
 namespace bitoscope::gui_decode {
@@ -96,12 +99,63 @@ std::optional<std::uint64_t> budgetMibFromEnvironment() {
 #endif
 }
 
-std::uint64_t decoderBudgetBytes(std::optional<std::uint64_t> environmentMib, std::uint64_t preferenceMib,
-                                 std::optional<std::uint64_t> freeBytes) {
+namespace {
+
+std::optional<std::uint64_t> namedBudgetBytes(std::optional<std::uint64_t> environmentMib,
+                                              std::uint64_t preferenceMib) {
   if (environmentMib) return *environmentMib * kMiB;
   if (preferenceMib != 0 && preferenceMib <= kMaximumBudgetMib) return preferenceMib * kMiB;
+  return std::nullopt;
+}
+
+std::uint64_t halfInWholeMib(std::uint64_t bytes) { return bytes / 2 / kMiB * kMiB; }
+
+std::string mib(std::uint64_t bytes) { return capture::plan_detail::withThousands(bytes / kMiB); }
+
+}
+
+std::uint64_t decoderBudgetBytes(std::optional<std::uint64_t> environmentMib, std::uint64_t preferenceMib,
+                                 std::optional<std::uint64_t> freeBytes) {
+  if (const auto named = namedBudgetBytes(environmentMib, preferenceMib)) return *named;
   if (!freeBytes) return kMinimumAutomaticBudgetBytes;
-  return (std::max)(*freeBytes / 2 / kMiB * kMiB, kMinimumAutomaticBudgetBytes);
+  return (std::max)(halfInWholeMib(*freeBytes), kMinimumAutomaticBudgetBytes);
+}
+
+std::expected<std::uint64_t, std::string> liveDecoderBudgetBytes(std::optional<std::uint64_t> environmentMib,
+                                                                 std::uint64_t preferenceMib, std::uint64_t freeBytes,
+                                                                 std::uint64_t capturesStillNeed) {
+  if (capturesStillNeed == 0) return decoderBudgetBytes(environmentMib, preferenceMib, freeBytes);
+  const std::uint64_t could = halfInWholeMib(freeBytes > capturesStillNeed ? freeBytes - capturesStillNeed : 0);
+  if (const auto named = namedBudgetBytes(environmentMib, preferenceMib)) {
+    if (*named <= could) return *named;
+    return std::unexpected(std::format("decoding starts when capture ends: decoder budget of {} MiB is more than {} "
+                                       "MiB decoded results may hold beside memory capture still needs",
+                                       mib(*named), mib(could)));
+  }
+  if (could < kMinimumAutomaticBudgetBytes) {
+    return std::unexpected(std::format("decoding starts when capture ends: beside memory capture still needs, decoded "
+                                       "results could hold {} MiB, less than {} MiB minimum",
+                                       mib(could), mib(kMinimumAutomaticBudgetBytes)));
+  }
+  return could;
+}
+
+std::expected<std::uint64_t, std::string> liveRunBudget(
+  capture::MemoryProbe& probe, std::optional<std::uint64_t> environmentMib, std::uint64_t preferenceMib,
+  std::span<const std::shared_ptr<const capture::CaptureSession>> running) {
+  const auto freeBytes = probe.freePhysicalBytes();
+  if (!freeBytes) {
+    return std::unexpected("decoding starts when capture ends: could not read free RAM: " + freeBytes.error());
+  }
+  std::uint64_t stillNeed = 0;
+  for (const auto& session : running) {
+    if (session) stillNeed += session->memoryStillNeeded(*freeBytes);
+  }
+  return liveDecoderBudgetBytes(environmentMib, preferenceMib, *freeBytes, stillNeed);
+}
+
+std::string decodedResultsMayHoldText(std::uint64_t budgetBytes) {
+  return std::format("decoded results may hold {} MiB", mib(budgetBytes));
 }
 
 std::string budgetFailureText(const decode::Decoder& decoder, const waveform_view::GroupsRefusal& refusal,

@@ -15,6 +15,6 @@ struct CaptureExtent {
   bool operator==(const CaptureExtent&) const = default;
 };
 
-enum class ExtentTail : uint8_t { Exact, InsideLastWindow };
+enum class ExtentTail : uint8_t { Exact, InsideLastWindow, Trimmed };
 
 }

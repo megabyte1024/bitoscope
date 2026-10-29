@@ -615,7 +615,9 @@ void GuiApp::drawSession(const gui_session::Session& session, ImGuiID centralNod
     gui_dock_focus::bringToFrontBeforeBegin(title.c_str());
     focusSession_.reset();
   }
-  if (ImGui::Begin(title.c_str(), closeButton)) {
+  const auto capture = sessionUi_.find(session.id);
+  const bool unsavedMark = capture != sessionUi_.end() && gui_capture::panelUnsavedMark(capture->second.capture);
+  if (ImGui::Begin(title.c_str(), closeButton, unsavedMark ? ImGuiWindowFlags_UnsavedDocument : ImGuiWindowFlags_None)) {
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
       sessions_.setActive(session.id);
     }
@@ -787,13 +789,15 @@ void GuiApp::drawSessionBody(const gui_session::Session& session, SessionUi& ui)
     1.0f, available - laneWidth - activityBar - (open ? splitter + propertiesWidth : 0));
 
   const auto drawLanesAndSignals = [&] {
-    std::optional<gui_capture::LiveCaptureSlot::View> live;
-    if (ui.slot) {
-      live.emplace(ui.slot->view());
+    std::optional<gui_waveform_frame::LiveSource> live;
+    if (ui.slot && ui.running) {
+      const auto view = ui.slot->view();
+      live = gui_waveform_frame::LiveSource{view.session(), view.generation(), ui.running->requestedSamples,
+                                            ui.running->deviceChannels, ui.running->request.sample_rate_milli_hz};
     }
     {
       BITOSCOPE_DRAW_PART(syncPart, frameProbe_, Prologue);
-      syncWaveform(session.id, ui, live ? &*live : nullptr);
+      syncWaveform(session.id, ui, live);
     }
     drawWaveform(session.id, ui, laneWidth, laneWidth + signalsWidth, kSignalsWidthMin * scale);
   };
@@ -1309,10 +1313,11 @@ void GuiApp::drawChannelSelector(std::vector<bool>& selected, const std::vector<
     }
   };
   const bool captureShown =
-    shown != nullptr && shown->shows == SessionWaveform::Shows::Kept && shown->source != nullptr;
+    shown != nullptr && shown->sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Kept &&
+    shown->sources.source() != nullptr;
   ImGui::BeginDisabled(!captureShown);
   if (ImGui::Button(labels[0].c_str())) {
-    const std::vector<std::uint32_t> pulsing = wv::channelsWithPulses(*shown->source, shown->laneDevice);
+    const std::vector<std::uint32_t> pulsing = wv::channelsWithPulses(*shown->sources.source(), shown->sources.laneDevice());
     const std::vector<std::uint32_t> pulsingEntries =
       entryChannel.empty() ? pulsing : wv::lanesOfChannels(entryChannel, pulsing);
     if (!wv::selectOnlyChannels(selected, pulsingEntries)) {

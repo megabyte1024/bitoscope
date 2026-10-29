@@ -30,6 +30,13 @@ class AnnotationBudget final : public AnnotationMemory {
   std::uint64_t held_;
 };
 
+struct MemoryCharge {
+  AnnotationMemory* memory = nullptr;
+  std::size_t charged = 0;
+  void acquire(std::size_t bytes);
+  void release(std::size_t bytes);
+};
+
 struct GroupsRefusal {
   enum class Reason { OverBudget, OutOfMemory };
   Reason reason = Reason::OverBudget;

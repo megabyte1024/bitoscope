@@ -9,8 +9,6 @@ add_library(bitoscope_gui_linux STATIC
     cursor_theme.h
     deferred_releases.cpp
     deferred_releases.h
-    frame_loop.cpp
-    frame_loop.h
     locale_languages.cpp
     locale_languages.h
     portal_file_chooser.cpp

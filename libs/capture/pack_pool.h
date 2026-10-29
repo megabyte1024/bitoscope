@@ -27,9 +27,12 @@ struct PackPoolHooks {
   std::function<void(uint64_t seq, std::expected<PackedWindow, std::string>& packed)> alter_packed;
 };
 
+using PackPrepareFn = std::function<std::expected<void, std::string>(uint64_t seq, bitoscope::host::WindowLease& lease)>;
+
 struct PackPoolConfig {
   uint32_t workers = 1;
   uint32_t depth = 0;
+  PackPrepareFn prepare;
   PackPoolHooks hooks;
 };
 
@@ -80,7 +83,7 @@ class PackPool {
     std::expected<PackedWindow, std::string> result;
   };
 
-  PackPool(const RawCaptureBuffer& buffer, PackPoolHooks hooks, CommitFn commit);
+  PackPool(const RawCaptureBuffer& buffer, PackPoolHooks hooks, PackPrepareFn prepare, CommitFn commit);
 
   void run();
   void commitReady();
@@ -88,6 +91,7 @@ class PackPool {
 
   const RawCaptureBuffer& buffer_;
   PackPoolHooks hooks_;
+  PackPrepareFn prepare_;
   CommitFn commit_;
   std::vector<Slot> slots_;
   std::vector<std::thread> threads_;

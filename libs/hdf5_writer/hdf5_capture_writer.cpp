@@ -8,13 +8,16 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <memory>
 #include <new>
 #include <system_error>
+#include <thread>
 #include <variant>
 #include <vector>
 
 #include <hdf5.h>
 
+#include "chunk_deflater.h"
 #include "read_samples.h"
 
 namespace bitoscope::hdf5 {
@@ -52,6 +55,12 @@ std::optional<bitoscope::capture::ShortReason> sessionShortReason(
 constexpr uint32_t kFormatVersion = 4;
 constexpr const char* kBitOrder = "lsb-first";
 constexpr uint32_t kMaxGzipLevel = 9;
+constexpr uint32_t kMaxAutoDeflateWorkers = 8;
+
+uint32_t deflateWorkerCount(const Hdf5WriterOptions& options) {
+  if (options.deflate_workers != 0) return options.deflate_workers;
+  return (std::clamp)(std::thread::hardware_concurrency(), 1u, kMaxAutoDeflateWorkers);
+}
 
 class Handle {
  public:
@@ -162,16 +171,43 @@ std::expected<void, std::string> writeChannel(hid_t channels_group, const RawCap
   }
   if (auto r = writeStringAttr(dataset.id(), "name", saved.name); !r) return r;
 
-  std::vector<uint8_t> piece(static_cast<size_t>(chunk));
+  std::unique_ptr<ChunkDeflater> deflater;
+  std::vector<uint8_t> piece;
+  if (options.gzip_level > 0) {
+    auto created = ChunkDeflater::create(deflateWorkerCount(options), options.gzip_level, static_cast<size_t>(chunk),
+                                         options.before_deflate);
+    if (!created) return std::unexpected(created.error());
+    deflater = std::move(*created);
+  } else {
+    piece.resize(static_cast<size_t>(chunk));
+  }
+  const ChunkDeflater::Sink writeDeflated = [&](uint64_t index, std::span<const uint8_t> deflated) -> std::expected<void, std::string> {
+    const hsize_t offset = static_cast<hsize_t>(index * chunk);
+    if (H5Dwrite_chunk(dataset.id(), H5P_DEFAULT, 0, &offset, deflated.size(), deflated.data()) < 0) {
+      return fail(std::format("cannot write channel {} at byte {}", name, offset));
+    }
+    return {};
+  };
+
   for (uint64_t first = 0; first < total_bytes; first += chunk) {
     const uint64_t n = (std::min)(uint64_t{chunk}, total_bytes - first);
     const uint64_t sample_offset = extent_first_sample + 8 * first;
     const uint64_t samples_in_chunk = (std::min)(8 * n, total_samples - 8 * first);
-    const std::span<uint8_t> out(piece.data(), static_cast<size_t>(n));
+    std::span<uint8_t> room(piece.data(), piece.size());
+    if (deflater) {
+      auto reserved = deflater->reserve(writeDeflated);
+      if (!reserved) return std::unexpected(reserved.error());
+      room = *reserved;
+    }
+    const std::span<uint8_t> out = room.first(static_cast<size_t>(n));
     if (auto r = readSamples(buffer, buffer_channel, sample_offset, samples_in_chunk, out); !r) {
       return std::unexpected(
           std::format("reading channel {} at sample {}: {}", buffer_channel, buffer.describeSample(sample_offset),
                       r.error()));
+    }
+    if (deflater) {
+      deflater->submit(static_cast<size_t>(n));
+      continue;
     }
     const hsize_t start = static_cast<hsize_t>(first);
     const hsize_t count = static_cast<hsize_t>(n);
@@ -186,6 +222,9 @@ std::expected<void, std::string> writeChannel(hid_t channels_group, const RawCap
                  out.data()) < 0) {
       return fail(std::format("cannot write channel {} at byte {}", name, first));
     }
+  }
+  if (deflater) {
+    if (auto r = deflater->finish(writeDeflated); !r) return r;
   }
   return {};
 }

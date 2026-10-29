@@ -140,6 +140,12 @@ bool AnnotationStore::showsPrefix(std::size_t index) const {
   return progress(index) != nullptr && drawn(index) == nullptr;
 }
 
+std::optional<std::size_t> AnnotationStore::runPositionOf(std::size_t index) const {
+  const auto found = std::ranges::find(runIndex_, index);
+  if (found == runIndex_.end()) return std::nullopt;
+  return static_cast<std::size_t>(found - runIndex_.begin());
+}
+
 const ShownResult* AnnotationStore::progressShown(std::size_t index) const {
   if (index >= decoders_.size() || !decoders_[index].progress) return nullptr;
   return &decoders_[index].progress->shown;

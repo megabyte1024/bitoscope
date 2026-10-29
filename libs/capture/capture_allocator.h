@@ -50,10 +50,17 @@ class SystemBlockSource final : public BlockSource {
   }
 };
 
+struct BlockRefusal {
+  enum class Kind : uint8_t { Refused, Late };
+  Kind kind = Kind::Refused;
+  std::string why;
+};
+
 class ArenaBlockSupply {
  public:
   virtual ~ArenaBlockSupply() = default;
-  virtual std::expected<std::shared_ptr<uint8_t[]>, std::string> supply(uint64_t index, uint64_t bytes) = 0;
+  virtual std::expected<std::shared_ptr<uint8_t[]>, BlockRefusal> supply(uint64_t index, uint64_t bytes) = 0;
+  virtual void prepare([[maybe_unused]] uint64_t index, [[maybe_unused]] uint64_t bytes) {}
 };
 
 enum class AllocationPolicy { Whole, Chunked };
@@ -68,6 +75,8 @@ struct AllocatorSettings {
   ArenaCap arena_cap = ArenaCap::Plan;
   uint32_t clearing_workers = 1;
   ClearingThreads* clearing_threads = nullptr;
+  bool held_back_taken_before_arena = false;
+  bool commit_without_clearing = false;
 };
 
 class Reservation {
@@ -150,6 +159,13 @@ inline uint64_t guaranteedSamples(const Reservation& reservation) {
   return samples;
 }
 
+inline std::string noWindowRefusal(const CapturePlan& plan, uint64_t budget_bytes) {
+  return std::format(
+      "memory budget of {} bytes holds less than one window of {} bytes ({} channels x {} samples); lower "
+      "rate or channel count, or raise --memory-budget",
+      budget_bytes, plan.slotBytes(0), plan.channels(), plan.slotSamples(0));
+}
+
 struct ArenaShape {
   MemoryBudget budget;
   std::optional<std::string> cut;
@@ -176,10 +192,7 @@ inline std::expected<ArenaShape, std::string> shapeArena(const CapturePlan& plan
   shape.arena_target = (std::min)(budget.bytes, cap_bytes);
 
   if (shape.arena_target < plan.slotBytes(0)) {
-    return std::unexpected(std::format(
-        "memory budget of {} bytes holds less than one window of {} bytes ({} channels x {} "
-        "samples); lower rate or channel count, or raise --memory-budget",
-        budget.bytes, plan.slotBytes(0), plan.channels(), plan.slotSamples(0)));
+    return std::unexpected(noWindowRefusal(plan, budget.bytes));
   }
 
   shape.block_bytes = (std::min)(asked_block_bytes, shape.arena_target);
@@ -196,23 +209,42 @@ inline std::expected<ArenaShape, std::string> shapeArena(const CapturePlan& plan
   return shapeArena(plan, *budget, settings);
 }
 
-inline std::optional<std::string> freeRamRefusal(MemoryProbe& probe, const MemoryBudget& budget, uint64_t index,
-                                                 uint64_t bytes) {
-  auto free_now = probe.freePhysicalBytes();
-  if (!free_now) return std::format("could not re-read free RAM before block {}: {}", index, free_now.error());
+inline uint64_t withheldBytes(const MemoryBudget& budget) {
   // WHY: Withhold held_back too: memory the capture builds after its arena (pool, scratch, index, ring) must still
   // be there when it is built.
+  return budget.held_back > (std::numeric_limits<uint64_t>::max)() - budget.reserve
+             ? (std::numeric_limits<uint64_t>::max)()
+             : budget.reserve + budget.held_back;
+}
+
+inline MemoryBudget withHeldBackStillToCome(const MemoryBudget& budget, uint64_t free_now, uint64_t arena_taken) {
+  // WHY: Held back is resident before the arena grows; a fall beyond the arena is it: withhold only the rest.
+  const uint64_t fell = budget.available > free_now ? budget.available - free_now : 0;
+  const uint64_t beyond_arena = fell > arena_taken ? fell - arena_taken : 0;
+  MemoryBudget still_held = budget;
+  still_held.held_back -= (std::min)(budget.held_back, beyond_arena);
+  return still_held;
+}
+
+inline std::optional<std::string> freeRamRefusalAt(uint64_t free_now, const MemoryBudget& budget, uint64_t index,
+                                                   uint64_t bytes) {
   const uint64_t reserve = budget.reserve;
   const uint64_t held_back = budget.held_back;
-  const uint64_t withheld = held_back > (std::numeric_limits<uint64_t>::max)() - reserve
-                                ? (std::numeric_limits<uint64_t>::max)()
-                                : reserve + held_back;
-  if (*free_now >= withheld && *free_now - withheld >= bytes) return std::nullopt;
+  const uint64_t withheld = withheldBytes(budget);
+  if (free_now >= withheld && free_now - withheld >= bytes) return std::nullopt;
   return held_back != 0 ? std::format("free RAM fell to {} bytes before block {}; reserve of {} bytes plus {} bytes "
                                       "held back for what capture takes outside its arena are kept",
-                                      *free_now, index, reserve, held_back)
+                                      free_now, index, reserve, held_back)
                         : std::format("free RAM fell to {} bytes before block {}; reserve of {} bytes is kept",
-                                      *free_now, index, reserve);
+                                      free_now, index, reserve);
+}
+
+inline std::optional<std::string> freeRamRefusal(MemoryProbe& probe, const MemoryBudget& budget, uint64_t index,
+                                                 uint64_t bytes, std::optional<uint64_t> arena_taken = std::nullopt) {
+  auto free_now = probe.freePhysicalBytes();
+  if (!free_now) return std::format("could not re-read free RAM before block {}: {}", index, free_now.error());
+  if (!arena_taken) return freeRamRefusalAt(*free_now, budget, index, bytes);
+  return freeRamRefusalAt(*free_now, withHeldBackStillToCome(budget, *free_now, *arena_taken), index, bytes);
 }
 
 inline std::expected<Reservation, std::string> allocateCapture(
@@ -277,10 +309,7 @@ inline std::expected<Reservation, std::string> allocateCapture(
   reservation.samplesFloor = (std::min)(guaranteedSamples(reservation), plan.totalSamples());
   if (reservation.samplesFloor == 0) {
     if (!stopped.empty()) return std::unexpected(stopped);
-    return std::unexpected(std::format(
-        "memory budget of {} bytes holds less than one window of {} bytes ({} channels x {} "
-        "samples); lower rate or channel count, or raise --memory-budget",
-        budget.bytes, plan.slotBytes(0), plan.channels(), plan.slotSamples(0)));
+    return std::unexpected(noWindowRefusal(plan, budget.bytes));
   }
 
   if (shape->cut) reservation.warnings.push_back(*shape->cut);

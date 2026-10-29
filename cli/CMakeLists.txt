@@ -46,6 +46,24 @@ target_link_libraries(bitoscope_cli_settings PUBLIC
 target_compile_features(bitoscope_cli_settings PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_cli_settings)
 
+add_library(bitoscope_cli_units STATIC
+    cli_units.cpp
+)
+
+target_include_directories(bitoscope_cli_units PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bitoscope_cli_units PUBLIC bitoscope_capture bitoscope_trigger)
+target_compile_features(bitoscope_cli_units PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_cli_units)
+
+add_library(bitoscope_cli_args STATIC
+    cli_args.cpp
+)
+
+target_include_directories(bitoscope_cli_args PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bitoscope_cli_args PUBLIC bitoscope_cli_units bitoscope_acquisition_ring_config)
+target_compile_features(bitoscope_cli_args PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_cli_args)
+
 add_library(bitoscope_cli_acquire STATIC
     cli_acquire.cpp
 )
@@ -57,9 +75,11 @@ target_include_directories(bitoscope_cli_acquire PUBLIC
 )
 
 target_link_libraries(bitoscope_cli_acquire PUBLIC
+    bitoscope_cli_args
+    bitoscope_cli_units
     bitoscope_capture
     bitoscope_capture_read
-    bitoscope_pack_pool
+    bitoscope_capture_session
     bitoscope_acquisition
     bitoscope_cli_status_line
     bitoscope_cli_settings
@@ -106,12 +126,22 @@ target_link_libraries(bitoscope_cli_decoder_plugins PRIVATE bitoscope_display_te
 target_compile_features(bitoscope_cli_decoder_plugins PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_cli_decoder_plugins)
 
+add_library(bitoscope_cli_check_driver STATIC
+    cli_check_driver.cpp
+)
+
+target_include_directories(bitoscope_cli_check_driver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bitoscope_cli_check_driver PRIVATE bitoscope_driver_capture_check)
+target_compile_features(bitoscope_cli_check_driver PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_cli_check_driver)
+
 add_library(bitoscope_cli_run STATIC
     cli_run.cpp
 )
 
 target_include_directories(bitoscope_cli_run PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bitoscope_cli_run PUBLIC
+    bitoscope_cli_check_driver
     bitoscope_cli_plugins
     bitoscope_cli_acquire
     bitoscope_cli_ring_summary
@@ -119,7 +149,7 @@ target_link_libraries(bitoscope_cli_run PUBLIC
     bitoscope_acquisition_host_ring
     bitoscope_acquisition_ring_config
     bitoscope_capture
-    bitoscope_pack_pool
+    bitoscope_capture_session
     bitoscope_hdf5_writer
 )
 target_compile_features(bitoscope_cli_run PUBLIC cxx_std_23)

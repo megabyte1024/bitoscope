@@ -12,57 +12,106 @@
 #include <tuple>
 #include <utility>
 
-#include "output_writer.h"
-
 namespace bitoscope::decoders_lowlevel {
 
-using plugin::AnnotationClass;
+using plugin::AnnotationRole;
 using plugin::DecoderDeclaration;
 using plugin::OptionType;
-using plugin::StreamType;
+using plugin::RowRule;
 using plugin::ValueFormat;
 
 DecoderDeclaration NativeUart::declaration() const {
   DecoderDeclaration d;
   d.name = "uart";
   d.version = "0.1.0";
-  d.channels = {{"rx", "receive line", false, "RX"}, {"tx", "transmit line", false, "TX"}};
+  d.channels = {{.name = "rx", .description = "receive line", .optional = true, .display = "RX"},
+                {.name = "tx", .description = "transmit line", .optional = true, .display = "TX"}};
   d.options = {
-      {"baudrate", "bits per second", OptionType::integer, "115200", {}, 1, 4'000'000'000, {}, "Baud rate"},
-      {"data_bits", "data bits per frame", OptionType::integer, "8", {}, 5, 9, {}, "Data bits"},
-      {"parity", "parity bit", OptionType::string, "none", {"none", "odd", "even"}, std::nullopt, std::nullopt,
-       {"zero", "one", "ignore"}, "Parity"},
-      {"stop_bits", "stop bits", OptionType::string, "1", {"1", "1.5", "2"}, std::nullopt, std::nullopt,
-       {"0", "0.5"}, "Stop bits"},
-      {"bit_order", "order of data bits", OptionType::string, "lsb-first", {"lsb-first", "msb-first"},
-       std::nullopt, std::nullopt, {}, "Bit order"},
-      {"invert_rx", "invert receive line", OptionType::string, "no", {"no", "yes"}, std::nullopt, std::nullopt, {},
-       "Invert RX"},
-      {"invert_tx", "invert transmit line", OptionType::string, "no", {"no", "yes"}, std::nullopt, std::nullopt, {},
-       "Invert TX"},
-      {"show_bits", "one annotation per data bit", OptionType::string, "yes", {"yes", "no"}, std::nullopt,
-       std::nullopt, {}, "Show bits"},
+      {.name = "baudrate",
+       .description = "bits per second",
+       .type = OptionType::integer,
+       .defaultValue = "115200",
+       .min = 1,
+       .max = 4'000'000'000,
+       .display = "Baud rate"},
+      {.name = "data_bits",
+       .description = "data bits per frame",
+       .type = OptionType::integer,
+       .defaultValue = "8",
+       .min = 5,
+       .max = 9,
+       .display = "Data bits"},
+      {.name = "parity",
+       .description = "parity bit",
+       .defaultValue = "none",
+       .allowedValues = {"none", "odd", "even"},
+       .unsupportedValues = {"zero", "one", "ignore"},
+       .display = "Parity"},
+      {.name = "stop_bits",
+       .description = "stop bits",
+       .defaultValue = "1",
+       .allowedValues = {"1", "1.5", "2"},
+       .unsupportedValues = {"0", "0.5"},
+       .display = "Stop bits"},
+      {.name = "bit_order",
+       .description = "order of data bits",
+       .defaultValue = "lsb-first",
+       .allowedValues = {"lsb-first", "msb-first"},
+       .display = "Bit order"},
+      {.name = "invert_rx",
+       .description = "invert receive line",
+       .defaultValue = "no",
+       .allowedValues = {"no", "yes"},
+       .display = "Invert RX"},
+      {.name = "invert_tx",
+       .description = "invert transmit line",
+       .defaultValue = "no",
+       .allowedValues = {"no", "yes"},
+       .display = "Invert TX"},
+      {.name = "show_bits",
+       .description = "one annotation per data bit",
+       .defaultValue = "yes",
+       .allowedValues = {"yes", "no"},
+       .display = "Show bits"},
   };
   d.unsupportedOptions = {"format",          "sample_point",  "rx_packet_delim",
                           "tx_packet_delim", "rx_packet_len", "tx_packet_len"};
   d.classes = {
-      AnnotationClass{kClassData, "", ValueFormat::hex, 0, "data_bits", plugin::AnnotationRole::data},
-      AnnotationClass{kClassStart, "Start", ValueFormat::none, 0, "", plugin::AnnotationRole::start},
-      AnnotationClass{kClassStop, "Stop", ValueFormat::none, 0, "", plugin::AnnotationRole::stop},
-      AnnotationClass{kClassFramingError, "Framing error", ValueFormat::none, 0, "", plugin::AnnotationRole::error},
-      AnnotationClass{kClassParityError, "Parity error", ValueFormat::none, 0, "", plugin::AnnotationRole::error},
-      AnnotationClass{kClassFrameCutOff, "Frame cut off", ValueFormat::none, 0, "", plugin::AnnotationRole::error},
-      AnnotationClass{kClassBit, "", ValueFormat::decimal, 0, "", plugin::AnnotationRole::bit},
+      {.id = kClassData, .format = ValueFormat::hex, .hexDigitsOption = "data_bits", .role = AnnotationRole::data},
+      {.id = kClassStart, .name = "Start", .role = AnnotationRole::start},
+      {.id = kClassStop, .name = "Stop", .role = AnnotationRole::stop},
+      {.id = kClassFramingError, .name = "Framing error", .role = AnnotationRole::error},
+      {.id = kClassParityError, .name = "Parity error", .role = AnnotationRole::error},
+      {.id = kClassFrameCutOff, .name = "Frame cut off", .role = AnnotationRole::error},
+      {.id = kClassBit, .format = ValueFormat::decimal, .role = AnnotationRole::bit},
   };
   d.rows = {{kRowRxBits, "RX bits"}, {kRowRx, "RX"}, {kRowTxBits, "TX bits"}, {kRowTx, "TX"}};
-  plugin::RowSource rxBits{kRowRxBits, kClassBit, kRowRx, {kClassData}, "show_bits", plugin::RowRule::bitGrid};
-  rxBits.grid = {"baudrate", 1, "data_bits", "bit_order"};
-  plugin::RowSource txBits = rxBits;
-  txBits.row = kRowTxBits;
-  txBits.sourceRow = kRowTx;
-  d.rowSources = {rxBits, txBits};
-  d.outputs = {{"rx", "received words", StreamType::words, 0, "data_bits", "rx", "", "uart"},
-               {"tx", "transmitted words", StreamType::words, 0, "data_bits", "tx", "", "uart"}};
+  const plugin::BitGrid grid{
+      .rateOption = "baudrate", .offsetBits = 1, .countOption = "data_bits", .orderOption = "bit_order"};
+  d.rowSources = {{.row = kRowRxBits,
+                   .cls = kClassBit,
+                   .sourceRow = kRowRx,
+                   .sourceClasses = {kClassData},
+                   .enableOption = "show_bits",
+                   .rule = RowRule::bitGrid,
+                   .grid = grid},
+                  {.row = kRowTxBits,
+                   .cls = kClassBit,
+                   .sourceRow = kRowTx,
+                   .sourceClasses = {kClassData},
+                   .enableOption = "show_bits",
+                   .rule = RowRule::bitGrid,
+                   .grid = grid}};
+  d.outputs = {{.name = "rx",
+                .description = "received words",
+                .widthOption = "data_bits",
+                .requiresChannel = "rx",
+                .carries = "uart"},
+               {.name = "tx",
+                .description = "transmitted words",
+                .widthOption = "data_bits",
+                .requiresChannel = "tx",
+                .carries = "uart"}};
   return d;
 }
 
@@ -163,11 +212,9 @@ class UartWalk {
   }
 
   template <typename Change>
-  bool change(const Change& c) {
+  void change(const Change& c) {
     const uint64_t at = c.at();
-    for (Line& line : lines_) {
-      if (!advance(line, at)) return false;
-    }
+    for (Line& line : lines_) advance(line, at);
     for (size_t i = 0; i < W; ++i) {
       if (!c.changed(i)) continue;
       Line& line = lines_[i];
@@ -179,12 +226,11 @@ class UartWalk {
         begin(line, at);
       }
     }
-    return true;
   }
 
   void finish(uint64_t samples) {
     for (Line& line : lines_) {
-      if (!advance(line, samples)) return;
+      advance(line, samples);
       if (line.phase != Phase::frame) continue;
       if (heldLowSinceFrameStart(line)) {
         awaitIdle(line);
@@ -192,10 +238,16 @@ class UartWalk {
       }
       line.frame.cutOff = line.frame.start + f_.halfBitBeforeEnd >= samples;
       line.frame.stopEnd = (std::min)(line.frame.start + f_.end, samples);
-      if (!completed(line)) return;
+      completed(line);
     }
   }
 
+  uint64_t progressAt(uint64_t position) {
+    for (Line& line : lines_) advance(line, position);
+    return oldestOpen();
+  }
+
+ private:
   uint64_t oldestOpen() const {
     uint64_t mark = UINT64_MAX;
     for (const Line& line : lines_) {
@@ -208,7 +260,6 @@ class UartWalk {
     return mark;
   }
 
- private:
   static bool heldLowSinceFrameStart(const Line& line) { return line.lastEdge <= line.frame.start; }
 
   static void awaitIdle(Line& line) {
@@ -225,13 +276,13 @@ class UartWalk {
     line.frame.start = at;
   }
 
-  bool advance(Line& line, uint64_t until) {
+  void advance(Line& line, uint64_t until) {
     while (line.next < until) {
       if (line.phase == Phase::seek) {
         if (line.idle) {
           line.phase = Phase::awaitStart;
           line.next = UINT64_MAX;
-          return true;
+          return;
         }
         begin(line, line.next);
         continue;
@@ -242,10 +293,10 @@ class UartWalk {
       if (k == lastPoint_) {
         if (heldLowSinceFrameStart(line)) {
           awaitIdle(line);
-          return true;
+          return;
         }
         frame.stopEnd = frame.start + f_.end;
-        if (!completed(line)) return false;
+        completed(line);
         continue;
       }
       if (k == 0) {
@@ -262,38 +313,32 @@ class UartWalk {
       line.point = k + 1;
       line.next = frame.start + points_[k + 1];
     }
-    return true;
   }
 
-  bool completed(Line& line) {
+  void completed(Line& line) {
     line.phase = Phase::seek;
     line.next = line.frame.stopEnd;
-    return emit(line, line.frame);
+    emit(line, line.frame);
   }
 
-  bool emit(const Line& line, const Frame& frame) {
+  void emit(const Line& line, const Frame& frame) {
     const uint64_t s = frame.start;
     if (frame.cutOff) {
-      return out_.emit(s, frame.stopEnd, line.row, NativeUart::kClassFrameCutOff, 0) &&
-             (!line.words || line.words.put(s, frame.stopEnd, plugin::kItemBoundary, 0, plugin::kItemDamaged));
+      out_.emit(s, frame.stopEnd, line.row, NativeUart::kClassFrameCutOff, 0);
+      line.words.put(s, frame.stopEnd, plugin::kItemBoundary, 0, plugin::kItemDamaged);
+      return;
     }
     const uint64_t dataEnd = s + f_.begin[1 + f_.dataBits];
-    if (!out_.emit(s, s + f_.begin[1], line.row,
-                   frame.framingError ? NativeUart::kClassFramingError : NativeUart::kClassStart, 0) ||
-        !out_.emit(s + f_.begin[1], dataEnd, line.row, NativeUart::kClassData, frame.value)) {
-      return false;
+    out_.emit(s, s + f_.begin[1], line.row, frame.framingError ? NativeUart::kClassFramingError : NativeUart::kClassStart,
+              0);
+    out_.emit(s + f_.begin[1], dataEnd, line.row, NativeUart::kClassData, frame.value);
+    if (frame.parityError) {
+      out_.emit(dataEnd, s + f_.begin[2 + f_.dataBits], line.row, NativeUart::kClassParityError, 0);
     }
-    if (frame.parityError && !out_.emit(dataEnd, s + f_.begin[2 + f_.dataBits], line.row,
-                                         NativeUart::kClassParityError, 0)) {
-      return false;
-    }
-    if (!out_.emit(s + f_.begin[stopPoint_], frame.stopEnd, line.row,
-                   frame.stopError ? NativeUart::kClassFramingError : NativeUart::kClassStop, 0)) {
-      return false;
-    }
+    out_.emit(s + f_.begin[stopPoint_], frame.stopEnd, line.row,
+              frame.stopError ? NativeUart::kClassFramingError : NativeUart::kClassStop, 0);
     const bool damaged = frame.framingError || frame.parityError || frame.stopError;
-    return !line.words ||
-           line.words.put(s + f_.begin[1], dataEnd, plugin::kItemData, frame.value, damaged ? plugin::kItemDamaged : 0u);
+    line.words.put(s + f_.begin[1], dataEnd, plugin::kItemData, frame.value, damaged ? plugin::kItemDamaged : 0u);
   }
 
   const Framing& f_;
@@ -309,15 +354,18 @@ template <size_t W>
 void walk(const Framing& f, plugin::DecodeInput& input, plugin::Annotations& out, std::array<Line, W>& lines,
           const std::array<plugin::WatchedLine, W>& watched) {
   UartWalk<W> uart(f, out, lines);
-  auto oldestOpen = [&uart] { return uart.oldestOpen(); };
-  input.onProgress(oldestOpen);
+  auto progress = [&uart](uint64_t position) { return uart.progressAt(position); };
+  input.onProgress(progress);
   const auto end = plugin::forEachChange(
       input, watched, std::array<uint32_t, 0>{},
       [&uart](uint32_t levels) {
         uart.start(levels);
         return true;
       },
-      [&uart](const auto& c) { return uart.change(c); });
+      [&uart](const auto& c) {
+        uart.change(c);
+        return true;
+      });
   if (end) uart.finish(*end);
 }
 
@@ -333,7 +381,7 @@ std::expected<void, std::string> NativeUart::decode(const plugin::DecodeJob& job
        {std::tuple{"rx", kRowRx, "invert_rx"}, std::tuple{"tx", kRowTx, "invert_tx"}}) {
     const auto channel = job.channel(name);
     if (!channel) continue;
-    auto words = decoders_common::outputWriter(job, out, name);
+    auto words = out.output(job, name);
     if (!words) return std::unexpected(words.error());
     lines[count].row = row;
     lines[count].invert = job.option(invert) == "yes";

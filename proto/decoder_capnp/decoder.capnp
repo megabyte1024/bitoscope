@@ -180,6 +180,7 @@ struct CaptureFacts {
   sampleRateMilliHz @0 :UInt64;
   channelCount @1 :UInt32;
   totalSamples @2 :UInt64;
+  totalIsBound @3 :Bool;
 }
 
 struct InputBinding {

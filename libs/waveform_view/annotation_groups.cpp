@@ -10,6 +10,7 @@
 #include <cstring>
 #include <new>
 #include <numeric>
+#include <optional>
 #include <queue>
 
 namespace bitoscope::waveform_view {
@@ -546,7 +547,8 @@ std::span<const std::uint8_t> AnnotationGroups::blockArray(std::size_t g) const 
 }
 
 std::size_t AnnotationGroups::Group::bytes() const {
-  return blockArrayBytes() + vectorBytes(longLengths) + vectorBytes(maxEnds) + vectorBytes(sortedEnds);
+  return blockArrayBytes() + vectorBytes(longLengths) + vectorBytes(maxEnds) + vectorBytes(sortedEnds) +
+         coverage.bytes();
 }
 
 struct AnnotationGroupsBuilder::BuildGroup {
@@ -562,6 +564,7 @@ struct AnnotationGroupsBuilder::BuildGroup {
   std::uint64_t largestDistance = 0;
   std::uint64_t lastBegin = 0;
   std::uint64_t lastEnd = 0;
+  std::uint64_t maxEnd = 0;
   std::uint64_t largestValue = 0;
   UsualValues usual;
   bool sorted = true;
@@ -576,23 +579,38 @@ struct AnnotationGroupsBuilder::BuildGroup {
   SplitColumn offsets;
   AppendColumn<std::uint8_t> payload;
   std::atomic<std::size_t> published{0};
-
-  void append(Group& group, const decode::Annotation& a, MemoryCharge& charge);
-  void close(MemoryCharge& charge);
-  void flatten(Group& group, MemoryCharge& charge);
-  std::size_t openBytes() const {
-    return sizeof(BuildGroup) + firsts.unusedBytes() + covereds.unusedBytes() + offsets.unusedBytes() +
-           payload.unusedBytes();
-  }
-  void closedBytes(std::vector<std::span<const std::uint8_t>>& out) const;
-  bool coveredNeeded() const { return lengthsField || usual.length == kLengthMarker; }
-  std::uint64_t usualCovered(std::size_t k) const { return std::uint64_t{k} * kBlockEntries * usual.length; }
+  std::optional<CoveragePyramidBuilder> coverage;
+  bool coverageOverCap = false;
 
   struct Entries {
     std::array<std::uint64_t, kBlockEntries> begins;
     std::array<std::uint32_t, kBlockEntries> lengths;
     std::array<std::uint64_t, kBlockEntries> values;
   };
+
+  void append(Group& group, const decode::Annotation& a, MemoryCharge& charge, std::size_t coverageCap = 0);
+  void close(MemoryCharge& charge);
+  void flatten(Group& group, MemoryCharge& charge);
+  std::size_t openBytes() const {
+    return sizeof(BuildGroup) + firsts.unusedBytes() + covereds.unusedBytes() + offsets.unusedBytes() +
+           payload.unusedBytes() + (coverage ? coverage->unusedBytes() : 0);
+  }
+  std::size_t storedBytes() const {
+    const auto columnBytes = [](const SplitColumn& c) {
+      return c.narrow.size() * sizeof(std::uint32_t) + c.wide.size() * sizeof(std::uint64_t);
+    };
+    return columnBytes(firsts) + columnBytes(covereds) + columnBytes(offsets) + payload.size() +
+           openCount * sizeof(std::uint32_t);
+  }
+  bool coverageEligible(const Group& group) const { return sorted && group.regular && group.n != 0; }
+  void startCoverage(const Group& group, unsigned shift, MemoryCharge& charge);
+  void stopCoverage(MemoryCharge& charge);
+  std::pair<std::uint64_t, std::uint64_t> spanAt(const Group& group, std::size_t i, Entries& cache,
+                                                 std::size_t& cached) const;
+  std::pair<std::uint64_t, std::uint64_t> coverageTail(const Group& group, std::size_t m, unsigned shift) const;
+  void closedBytes(std::vector<std::span<const std::uint8_t>>& out) const;
+  bool coveredNeeded() const { return lengthsField || usual.length == kLengthMarker; }
+  std::uint64_t usualCovered(std::size_t k) const { return std::uint64_t{k} * kBlockEntries * usual.length; }
   std::uint64_t closedFirst(std::size_t k) const { return firsts.get(k, firstBegin); }
   std::uint64_t closedOffset(std::size_t k) const;
   std::uint64_t coveredBefore(const Group& group, std::size_t k) const;
@@ -602,16 +620,19 @@ struct AnnotationGroupsBuilder::BuildGroup {
   std::size_t countBelow(const Group& group, std::uint64_t p) const;
   std::size_t valueBytesBelow(std::size_t m) const;
   Group prefix(const Group& group, std::size_t m, MemoryCharge& charge) const;
-  Group sortedBelow(const Group& group, std::uint64_t p, std::size_t count, MemoryCharge& charge) const;
+  Group sortedBelow(const Group& group, std::uint64_t p, std::size_t count, unsigned coverageShift,
+                    std::size_t coverageCap, MemoryCharge& charge) const;
   static std::uint64_t lengthOf(const Group& group, std::size_t i, std::uint32_t stored);
 
   static void sortGroup(Group& group, MemoryCharge& charge);
+  static void buildCoverage(Group& group, std::uint64_t end, unsigned shift, std::size_t cap, MemoryCharge& charge);
   static void buildEnds(Group& group, MemoryCharge& charge);
   template <class Fn>
   static void forEachSpan(const Group& group, Fn fn);
 };
 
-void AnnotationGroupsBuilder::BuildGroup::append(Group& group, const decode::Annotation& a, MemoryCharge& charge) {
+void AnnotationGroupsBuilder::BuildGroup::append(Group& group, const decode::Annotation& a, MemoryCharge& charge,
+                                                 std::size_t coverageCap) {
   const std::size_t i = group.n;
   if (i == 0) firstBegin = a.begin;
   if (openCount == 0) openCovered = group.covered;
@@ -634,6 +655,7 @@ void AnnotationGroupsBuilder::BuildGroup::append(Group& group, const decode::Ann
   }
   lastBegin = a.begin;
   lastEnd = a.end;
+  maxEnd = (std::max)(maxEnd, a.end);
   openLengths[openCount] = longLength ? AnnotationGroups::kLongLength : static_cast<std::uint32_t>(length);
   openValues[openCount] = a.value;
   if (a.value > largestValue) {
@@ -645,6 +667,14 @@ void AnnotationGroupsBuilder::BuildGroup::append(Group& group, const decode::Ann
   }
   open[openCount++] = a.begin;
   if (openCount == kBlockEntries) close(charge);
+  if (coverage) {
+    if (!coverageEligible(group)) {
+      stopCoverage(charge);
+    } else if (!coverage->add(a.begin, length, charge, coverageCap)) {
+      stopCoverage(charge);
+      coverageOverCap = true;
+    }
+  }
 }
 
 void AnnotationGroupsBuilder::BuildGroup::close(MemoryCharge& charge) {
@@ -976,11 +1006,21 @@ AnnotationGroups::Group AnnotationGroupsBuilder::BuildGroup::prefix(const Group&
   out.coveredWidth = coveredWidth;
   out.valueBytes = static_cast<std::uint8_t>(valueBytesBelow(m));
   if (!out.regular) buildEnds(out, charge);
+  if (coverage && coverage->started() && out.regular) {
+    if (m == group.n) {
+      out.coverage = coverage->finished(charge);
+    } else {
+      const auto [end, inLast] = coverageTail(group, m, coverage->shift());
+      out.coverage = coverage->finishedBefore(end, inLast, covered, charge);
+    }
+  }
   return out;
 }
 
 AnnotationGroups::Group AnnotationGroupsBuilder::BuildGroup::sortedBelow(const Group& group, std::uint64_t p,
-                                                                        std::size_t count, MemoryCharge& charge) const {
+                                                                        std::size_t count, unsigned coverageShift,
+                                                                        std::size_t coverageCap,
+                                                                        MemoryCharge& charge) const {
   const std::size_t temporary = 2 * count * sizeof(decode::Annotation);
   charge.acquire(temporary);
   std::vector<decode::Annotation> below;
@@ -995,8 +1035,11 @@ AnnotationGroups::Group AnnotationGroupsBuilder::BuildGroup::sortedBelow(const G
   out.cls = group.cls;
   charge.acquire(sizeof(BuildGroup));
   auto build = std::make_unique<BuildGroup>();
-  for (const decode::Annotation& a : below) build->append(out, a, charge);
+  if (coverageShift != 0) build->coverage.emplace(coverageShift);
+  for (const decode::Annotation& a : below) build->append(out, a, charge, coverageCap);
   build->flatten(out, charge);
+  if (build->coverage && out.regular) out.coverage = build->coverage->finished(charge);
+  build->stopCoverage(charge);
   build.reset();
   charge.release(sizeof(BuildGroup));
   shrinkVector(out.longLengths, charge);
@@ -1004,6 +1047,60 @@ AnnotationGroups::Group AnnotationGroupsBuilder::BuildGroup::sortedBelow(const G
   below = std::vector<decode::Annotation>();
   charge.release(temporary);
   return out;
+}
+
+void AnnotationGroupsBuilder::BuildGroup::startCoverage(const Group& group, unsigned shift, MemoryCharge& charge) {
+  stopCoverage(charge);
+  if (!coverageEligible(group)) return;
+  coverage.emplace(shift);
+  forEachEntry(group, [&](std::uint64_t b, std::uint64_t length, std::uint64_t) { coverage->add(b, length, charge); });
+}
+
+void AnnotationGroupsBuilder::BuildGroup::stopCoverage(MemoryCharge& charge) {
+  if (!coverage) return;
+  coverage->clear(charge);
+  coverage.reset();
+}
+
+std::pair<std::uint64_t, std::uint64_t> AnnotationGroupsBuilder::BuildGroup::spanAt(const Group& group, std::size_t i,
+                                                                                    Entries& cache,
+                                                                                    std::size_t& cached) const {
+  const std::size_t k = i / kBlockEntries;
+  const std::size_t t = i % kBlockEntries;
+  if (k < firsts.size()) {
+    if (cached != k) {
+      readClosed(k, cache);
+      cached = k;
+    }
+    return {cache.begins[t], lengthOf(group, i, cache.lengths[t])};
+  }
+  return {open[t], lengthOf(group, i, openLengths[t])};
+}
+
+std::pair<std::uint64_t, std::uint64_t> AnnotationGroupsBuilder::BuildGroup::coverageTail(const Group& group,
+                                                                                          std::size_t m,
+                                                                                          unsigned shift) const {
+  Entries cache;
+  std::size_t cached = kNone;
+  const auto [lastBegin, lastLength] = spanAt(group, m - 1, cache, cached);
+  const std::uint64_t end = lastBegin + lastLength;
+  const std::uint64_t from = ((end - 1) >> shift) << shift;
+  std::uint64_t inLast = 0;
+  for (std::size_t i = m; i > 0; --i) {
+    const auto [b, length] = spanAt(group, i - 1, cache, cached);
+    if (b + length <= from) break;
+    inLast += b + length - (std::max)(b, from);
+  }
+  return {end, inLast};
+}
+
+void AnnotationGroupsBuilder::BuildGroup::buildCoverage(Group& group, std::uint64_t end, unsigned shift,
+                                                        std::size_t cap, MemoryCharge& charge) {
+  if (!group.regular || group.n == 0 || coveragePyramidBytes(group.firstBegin, end, shift) > cap) return;
+  CoveragePyramidBuilder builder(shift);
+  forEachSpan(group, [&](std::uint64_t b, std::uint64_t length) { builder.add(b, length, charge); });
+  group.coverage = builder.finished(charge);
+  builder.clear(charge);
 }
 
 std::size_t AnnotationGroupsBuilder::groupFor(std::uint32_t row, std::uint32_t cls) {
@@ -1020,6 +1117,7 @@ std::size_t AnnotationGroupsBuilder::groupFor(std::uint32_t row, std::uint32_t c
   roomForOneMore(builds_, charge_);
   charge_.acquire(sizeof(BuildGroup));
   builds_.push_back(std::make_unique<BuildGroup>());
+  if (coverageShift_ != 0) builds_.back()->coverage.emplace(coverageShift_);
   groups_.emplace_back();
   groups_.back().row = row;
   groups_.back().cls = cls;
@@ -1049,6 +1147,89 @@ void MemoryCharge::release(std::size_t bytes) {
 AnnotationGroupsBuilder::AnnotationGroupsBuilder() = default;
 
 AnnotationGroupsBuilder::AnnotationGroupsBuilder(AnnotationMemory& memory) { charge_.memory = &memory; }
+
+AnnotationGroupsBuilder::AnnotationGroupsBuilder(CoveragePolicy policy) : policy_(policy) {
+  if (policy_.fixedShift != 0) {
+    coverageShift_ = std::clamp(policy_.fixedShift, CoveragePyramid::kLeastShift, CoveragePyramid::kMostShift);
+    coverageCap_ = kFixedCoverageCap;
+  }
+}
+
+AnnotationGroupsBuilder::AnnotationGroupsBuilder(AnnotationMemory& memory, CoveragePolicy policy)
+    : AnnotationGroupsBuilder(policy) {
+  charge_.memory = &memory;
+}
+
+std::size_t AnnotationGroupsBuilder::coverageBudget(std::size_t storeBytes) const {
+  return storeBytes / 100 * policy_.budgetPercent + storeBytes % 100 * policy_.budgetPercent / 100;
+}
+
+unsigned AnnotationGroupsBuilder::coverageShiftFor(std::span<const std::pair<std::uint64_t, std::uint64_t>> extents,
+                                                   std::size_t storeBytes) const {
+  if (policy_.fixedShift != 0) return coverageShift_;
+  if (policy_.budgetPercent == 0 || extents.empty()) return 0;
+  const std::size_t budget = coverageBudget(storeBytes);
+  const auto bytesAt = [&](unsigned shift) {
+    std::size_t bytes = 0;
+    for (const auto& [first, end] : extents) bytes += coveragePyramidBytes(first, end, shift);
+    return bytes;
+  };
+  unsigned best = CoveragePyramid::kLeastShift;
+  while (best < CoveragePyramid::kMostShift && bytesAt(best) > budget) ++best;
+  return bytesAt(best) > budget ? 0 : best;
+}
+
+void AnnotationGroupsBuilder::lookAfterAdding(const BuildGroup& build) {
+  if (build.coverageOverCap || stored_ + 1 >= nextCoverageLook_) lookAtCoverage();
+  while (nextCoverageLook_ <= stored_ + 1) nextCoverageLook_ *= 2;
+}
+
+void AnnotationGroupsBuilder::finishCoverage(AnnotationGroups& out, std::vector<std::unique_ptr<BuildGroup>>& builds) {
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> extents;
+  for (std::size_t g = 0; g < out.groups_.size(); ++g) {
+    const AnnotationGroups::Group& group = out.groups_[g];
+    if (group.regular && group.n != 0) extents.emplace_back(group.firstBegin, builds[g]->maxEnd);
+  }
+  const std::size_t store = out.memoryBytes();
+  const unsigned shift = coverageShiftFor(extents, store);
+  const std::size_t cap = policy_.fixedShift != 0 ? kFixedCoverageCap : coverageBudget(store);
+  for (std::size_t g = 0; g < out.groups_.size(); ++g) {
+    AnnotationGroups::Group& group = out.groups_[g];
+    BuildGroup& build = *builds[g];
+    if (shift != 0 && group.regular && group.n != 0) {
+      if (build.sorted && build.coverage && build.coverage->started() && build.coverage->shift() == shift) {
+        group.coverage = build.coverage->finished(charge_);
+      } else {
+        BuildGroup::buildCoverage(group, build.maxEnd, shift, cap, charge_);
+      }
+    }
+    build.stopCoverage(charge_);
+  }
+}
+
+void AnnotationGroupsBuilder::lookAtCoverage() {
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> extents;
+  std::size_t store = 0;
+  for (std::size_t g = 0; g < builds_.size(); ++g) {
+    store += builds_[g]->storedBytes() + vectorBytes(groups_[g].longLengths);
+    if (builds_[g]->coverageEligible(groups_[g])) extents.emplace_back(builds_[g]->firstBegin, builds_[g]->maxEnd);
+  }
+  const unsigned shift = coverageShiftFor(extents, store);
+  if (policy_.fixedShift == 0) coverageCap_ = (std::max)(2 * coverageBudget(store), kLeastCoverageCap);
+  const bool changed = shift != coverageShift_;
+  coverageShift_ = shift;
+  for (std::size_t g = 0; g < builds_.size(); ++g) {
+    BuildGroup& build = *builds_[g];
+    build.coverageOverCap = false;
+    const bool fits = shift != 0 && build.coverageEligible(groups_[g]) &&
+                      coveragePyramidBytes(build.firstBegin, build.maxEnd, shift) <= coverageCap_;
+    if (!fits) {
+      build.stopCoverage(charge_);
+    } else if (changed || !build.coverage) {
+      build.startCoverage(groups_[g], shift, charge_);
+    }
+  }
+}
 
 AnnotationGroupsBuilder::~AnnotationGroupsBuilder() { drop(); }
 
@@ -1099,7 +1280,8 @@ std::expected<void, GroupsRefusal> AnnotationGroupsBuilder::add(std::span<const 
   try {
     for (const decode::Annotation& a : batch) {
       const std::size_t g = groupFor(a.row, a.cls);
-      builds_[g]->append(groups_[g], a, charge_);
+      builds_[g]->append(groups_[g], a, charge_, coverageCap_);
+      lookAfterAdding(*builds_[g]);
       ++stored_;
     }
   } catch (const ChargeRefused&) {
@@ -1138,7 +1320,8 @@ std::expected<void, GroupsRefusal> AnnotationGroupsBuilder::addBytes(const decod
     if (!bytes.empty()) std::memcpy(pool.data() + at + kBytesLengthPrefix, bytes.data(), bytes.size());
     decode::Annotation stored = annotation;
     stored.value = at;
-    builds_[g]->append(groups_[g], stored, charge_);
+    builds_[g]->append(groups_[g], stored, charge_, coverageCap_);
+    lookAfterAdding(*builds_[g]);
     ++stored_;
   } catch (const ChargeRefused&) {
     return refuse(GroupsRefusal::Reason::OverBudget);
@@ -1167,16 +1350,23 @@ std::expected<AnnotationGroups, GroupsRefusal> AnnotationGroupsBuilder::finish()
       if (!build.sorted) BuildGroup::sortGroup(group, charge_);
       shrinkVector(group.longLengths, charge_);
       if (!group.regular) BuildGroup::buildEnds(group, charge_);
-      builds[g].reset();
-      charge_.release(sizeof(BuildGroup));
     }
-    const std::size_t buildsBytes = vectorBytes(builds);
-    builds = std::vector<std::unique_ptr<BuildGroup>>();
-    charge_.release(buildsBytes);
+    const std::size_t buildsBytes = vectorBytes(builds) + builds.size() * sizeof(BuildGroup);
+    // WHY: complete() sorts the groups by key: order the builds the same way so each still meets its group.
+    std::vector<std::size_t> order(groups.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::ranges::sort(order, {}, [&](std::size_t g) { return keyOf(groups[g].row, groups[g].cls); });
+    std::vector<std::unique_ptr<BuildGroup>> byKey;
+    byKey.reserve(builds.size());
+    for (const std::size_t g : order) byKey.push_back(std::move(builds[g]));
+    builds = std::move(byKey);
     complete(out, std::move(groups), charge_);
     out.bytePools_ = std::move(bytePools_);
     bytePools_.clear();
     shrinkVector(out.bytePools_, charge_);
+    finishCoverage(out, builds);
+    builds = std::vector<std::unique_ptr<BuildGroup>>();
+    charge_.release(buildsBytes);
   } catch (const ChargeRefused&) {
     out = {};
     return std::unexpected(refuse(GroupsRefusal::Reason::OverBudget).error());
@@ -1227,7 +1417,7 @@ std::expected<AnnotationGroups, GroupsRefusal> AnnotationGroupsBuilder::snapshot
       const std::size_t below = build.countBelow(groups_[g], p);
       if (below == 0) continue;
       groups.push_back(build.sorted ? build.prefix(groups_[g], below, charge)
-                                    : build.sortedBelow(groups_[g], p, below, charge));
+                                    : build.sortedBelow(groups_[g], p, below, coverageShift_, coverageCap_, charge));
     }
     complete(out, std::move(groups), charge);
     chargedVector(out.bytePools_, charge, bytePools_.size() * sizeof(AnnotationGroups::BytePool),
@@ -1255,8 +1445,8 @@ std::expected<AnnotationGroups, GroupsRefusal> AnnotationGroupsBuilder::snapshot
   return out;
 }
 
-AnnotationGroups groupAnnotations(std::span<const decode::Annotation> annotations) {
-  AnnotationGroupsBuilder builder;
+AnnotationGroups groupAnnotations(std::span<const decode::Annotation> annotations, CoveragePolicy policy) {
+  AnnotationGroupsBuilder builder(policy);
   if (!builder.add(annotations)) throw std::bad_alloc();
   auto groups = builder.finish();
   if (!groups) throw std::bad_alloc();

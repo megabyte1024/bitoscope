@@ -21,7 +21,9 @@ namespace bitoscope::hdf5 {
 struct Hdf5WriterOptions {
   uint32_t gzip_level = 6;
   uint64_t chunk_bytes = 128 * 1024;
+  uint32_t deflate_workers = 0;
   std::function<std::expected<void, std::string>(uint32_t channel)> after_channel;
+  std::function<std::expected<void, std::string>(uint64_t chunk)> before_deflate;
 };
 
 struct SessionDeviceCapture {

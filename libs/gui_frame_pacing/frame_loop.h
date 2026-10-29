@@ -4,18 +4,16 @@
 
 #pragma once
 
-// WHY: GLFW's Wayland backend always reports not iconified, so a minimized Wayland window counts as Visible;
-// Occluded is never reported because GLFW has no occlusion query.
-
-#include <frame_pacer.h>
+#include "frame_pacer.h"
 
 #include <cstdint>
 #include <functional>
 
-namespace bitoscope::gui_linux {
+namespace bitoscope::gui_frame_pacing {
 
 struct WindowObservation {
   bool iconified = false;
+  bool occluded = false;
   int framebufferWidth = 0;
   int framebufferHeight = 0;
   bool eventsHandled = false;
@@ -26,15 +24,16 @@ struct WindowObservation {
 struct AppObservation {
   bool backgroundChanged = false;
   bool captureRunning = false;
+  bool captureAdvanced = false;
   bool asyncWorkInFlight = false;
   bool uiNeedsMore = false;
   bool reduceIdleFrameRate = false;
 };
 
-gui_frame_pacing::WindowVisibility windowVisibility(bool iconified, int framebufferWidth, int framebufferHeight);
+WindowVisibility windowVisibility(bool iconified, bool occluded, int framebufferWidth, int framebufferHeight);
 
-gui_frame_pacing::FramePacingInput framePacingInput(const WindowObservation& window, const AppObservation& app,
-                                                    int lastDrawnWidth, int lastDrawnHeight);
+FramePacingInput framePacingInput(const WindowObservation& window, const AppObservation& app, int lastDrawnWidth,
+                                  int lastDrawnHeight);
 
 struct FrameLoopHooks {
   std::function<void()> handleEvents;
@@ -47,6 +46,6 @@ struct FrameLoopHooks {
   std::function<std::uint64_t()> nowMs;
 };
 
-int runFrameLoop(const FrameLoopHooks& hooks, gui_frame_pacing::FramePacer& pacer);
+int runFrameLoop(const FrameLoopHooks& hooks, FramePacer& pacer);
 
 }

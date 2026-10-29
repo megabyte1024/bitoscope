@@ -26,8 +26,11 @@ bool laneColumnHittable(const std::optional<HatchedColumns>& hatched, double col
   return !hatched || column < static_cast<double>(hatched->first);
 }
 
-LaneStatus decoderLaneStatus(bool decoding, bool failed, bool resultDrawn, std::optional<int> percent) {
+LaneStatus decoderLaneStatus(bool decoding, bool failed, bool resultDrawn, std::optional<int> percent,
+                             LaneCaptureMode mode) {
   if (failed) return {LaneStatusKind::Failed, 0};
+  if (mode == LaneCaptureMode::StartsAtEnd) return {LaneStatusKind::StartsWhenCaptureEnds, 0};
+  if (mode == LaneCaptureMode::Live) return decoding ? LaneStatus{LaneStatusKind::Decoding, 0} : LaneStatus{};
   if (!decoding) return {};
   if (percent) return {LaneStatusKind::DecodingPercent, *percent};
   if (!resultDrawn) return {LaneStatusKind::Decoding, 0};
