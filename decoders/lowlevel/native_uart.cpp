@@ -23,7 +23,7 @@ using plugin::ValueFormat;
 DecoderDeclaration NativeUart::declaration() const {
   DecoderDeclaration d;
   d.name = "uart";
-  d.version = "0.1.0";
+  d.version = "0.2.0";
   d.channels = {{.name = "rx", .description = "receive line", .optional = true, .display = "RX"},
                 {.name = "tx", .description = "transmit line", .optional = true, .display = "TX"}};
   d.options = {

@@ -107,7 +107,7 @@ end
 
 decoder {
   name = "cobs",
-  version = "0.1.0",
+  version = "0.2.0",
   inputs = {
     { name = "in", description = "encoded bytes", type = "words", width = 8, display = "Input" },
   },

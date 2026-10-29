@@ -314,7 +314,7 @@ end
 decoder {
   name = "spi_nor_flash",
   display = "SPI NOR flash",
-  version = "0.1.0",
+  version = "0.2.0",
   protocols = { "spi", "qspi" },
   inputs = {
     { name = "in", description = "SPI transfers", type = "spi-transfers", width = 8,

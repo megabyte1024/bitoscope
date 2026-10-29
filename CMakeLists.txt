@@ -2,7 +2,7 @@
 
 cmake_minimum_required(VERSION 3.24)
 
-project(bitoscope VERSION 0.1.0 LANGUAGES CXX)
+project(bitoscope VERSION 0.2.0 LANGUAGES CXX)
 
 # WHY: CMAKE_CXX_STANDARD 17 only pins third-party builds; every own target must declare cxx_std_23.
 set(CMAKE_CXX_STANDARD 17)

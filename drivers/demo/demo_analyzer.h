@@ -32,7 +32,7 @@ struct DemoHooks {
 
 inline constexpr std::string_view kDemoDeviceId = "demo-0";
 inline constexpr std::string_view kDemoDriverName = "Demo";
-inline constexpr std::string_view kDemoDriverVersion = "0.1.0";
+inline constexpr std::string_view kDemoDriverVersion = "0.2.0";
 inline constexpr std::string_view kDemoDeviceName = "Demo signals";
 
 std::vector<bitoscope::plugin::PropertyNode> demoProperties();
