@@ -1082,8 +1082,8 @@ std::pair<std::uint64_t, std::uint64_t> AnnotationGroupsBuilder::BuildGroup::cov
                                                                                           unsigned shift) const {
   Entries cache;
   std::size_t cached = kNone;
-  const auto [lastBegin, lastLength] = spanAt(group, m - 1, cache, cached);
-  const std::uint64_t end = lastBegin + lastLength;
+  const auto [tailBegin, tailLength] = spanAt(group, m - 1, cache, cached);
+  const std::uint64_t end = tailBegin + tailLength;
   const std::uint64_t from = ((end - 1) >> shift) << shift;
   std::uint64_t inLast = 0;
   for (std::size_t i = m; i > 0; --i) {
