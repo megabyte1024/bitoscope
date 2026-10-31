@@ -229,9 +229,9 @@ constexpr unsigned kAcquire = bit(Action::Acquire);
 
 constexpr unsigned kAnyAction = bit(Action::StartCapture) | bit(Action::Stop) | kAcquire |
                                        bit(Action::PwmStart) | bit(Action::PwmStop);
-constexpr unsigned kPluginAction =
+constexpr unsigned kDriverAction =
     kAnyAction | bit(Action::ListDevices) | bit(Action::WatchDevices) | bit(Action::ListProperties);
-constexpr unsigned kPluginDirAction = kPluginAction | bit(Action::Listen);
+constexpr unsigned kDriverDirAction = kDriverAction | bit(Action::Listen);
 constexpr unsigned kDeviceAction = kAnyAction | bit(Action::ListProperties);
 constexpr unsigned kDecoderDirAction = kAcquire | bit(Action::Listen) | bit(Action::ListDevices);
 
@@ -246,10 +246,10 @@ struct OptionSpec {
 
 constexpr std::array<OptionSpec, 40> kOptions = {{
     {"--check-driver", true, bit(Action::CheckDriver)},
-    {"--driver", true, kPluginAction},
+    {"--driver", true, kDriverAction},
     {"--device", true, kDeviceAction},
-    {"--driver-dir", true, kPluginDirAction},
-    {"--wait-s", true, kPluginDirAction},
+    {"--driver-dir", true, kDriverDirAction},
+    {"--wait-s", true, kDriverDirAction},
     {"--rate-hz", true, bit(Action::StartCapture)},
     {"--channel-mask", true, bit(Action::StartCapture)},
     {"--limit", true, bit(Action::StartCapture)},
@@ -507,7 +507,7 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
     const std::string_view text = args[++i];
 
     if (arg == "--driver") {
-      opts.plugin = std::string(text);
+      opts.driver = std::string(text);
       continue;
     }
     if (arg == "--check-driver") {
@@ -518,7 +518,7 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
       if (text.empty()) {
         return std::unexpected(std::string(arg) + (arg == "--device" ? " needs device id" : " needs directory"));
       }
-      (arg == "--device" ? opts.device : opts.plugin_dir) = std::string(text);
+      (arg == "--device" ? opts.device : opts.driver_dir) = std::string(text);
       continue;
     }
 

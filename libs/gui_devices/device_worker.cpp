@@ -56,7 +56,7 @@ void DeviceWorker::run() {
 
 void DeviceWorker::discover() {
   post([this](DeviceHost& host) {
-    const std::filesystem::path directory = host.pluginDirectory();
+    const std::filesystem::path directory = host.driverDirectory();
     const std::vector<std::string> drivers = host.drivers();
     queue_.post([directory, drivers](const ge::GuiEventHandlers& handlers) {
       if (handlers.onDriversFound) handlers.onDriversFound(directory, drivers);

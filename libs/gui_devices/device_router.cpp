@@ -74,13 +74,13 @@ gs::DeviceIdentity identityOf(std::string_view driver, const bitoscope::ipc::Dev
       .driver = std::string(driver), .id = device.id, .serialNumber = device.serialNumber};
 }
 
-std::optional<std::pair<std::string, std::string>> splitPluginId(std::string_view pluginId) {
-  const std::size_t slash = pluginId.find('/');
-  if (slash == std::string_view::npos || slash == 0 || slash + 1 == pluginId.size()) {
+std::optional<std::pair<std::string, std::string>> splitDriverDeviceId(std::string_view driverDeviceId) {
+  const std::size_t slash = driverDeviceId.find('/');
+  if (slash == std::string_view::npos || slash == 0 || slash + 1 == driverDeviceId.size()) {
     return std::nullopt;
   }
-  return std::pair<std::string, std::string>{std::string(pluginId.substr(0, slash)),
-                                             std::string(pluginId.substr(slash + 1))};
+  return std::pair<std::string, std::string>{std::string(driverDeviceId.substr(0, slash)),
+                                             std::string(driverDeviceId.substr(slash + 1))};
 }
 
 DeviceRouter::DeviceRouter(gs::SessionList& sessions) : sessions_(sessions) {}
@@ -90,7 +90,7 @@ void DeviceRouter::requestOpen(const Key& key, bool replug, RouterOutput& out) {
     replug_.insert(key);
   }
   if (pending_.insert(key).second) {
-    if (plugins_.contains(key)) {
+    if (drivers_.contains(key)) {
       closing_.insert(key);
     }
     out.open.push_back(DeviceRequest{key.first, key.second});
@@ -99,7 +99,7 @@ void DeviceRouter::requestOpen(const Key& key, bool replug, RouterOutput& out) {
 }
 
 bool DeviceRouter::heldHere(const Key& key) const {
-  return open_.contains(key) || pending_.contains(key) || plugins_.contains(key);
+  return open_.contains(key) || pending_.contains(key) || drivers_.contains(key);
 }
 
 bool DeviceRouter::watching(std::string_view driver) const {
@@ -299,13 +299,13 @@ RouterOutput DeviceRouter::deviceLost(std::string_view driver, std::string_view 
   return out;
 }
 
-RouterOutput DeviceRouter::hostDeviceLost(std::string_view pluginId, std::string_view reason) {
+RouterOutput DeviceRouter::hostDeviceLost(std::string_view driverDeviceId, std::string_view reason) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     out.log.push_back(std::format("Driver that is not \"<driver>/<device>\" ({}) reported its "
                                   "device lost: {}",
-                                  pluginId, reason));
+                                  driverDeviceId, reason));
     return out;
   }
   markLost(split->first, split->second, reason, out);
@@ -341,10 +341,10 @@ RouterOutput DeviceRouter::deviceOpened(
   const bool replug = replug_.erase(key) > 0;
   closing_.erase(key);
   if (opened) {
-    plugins_.insert(key);
+    drivers_.insert(key);
     opened_[key] = *opened;
   } else {
-    plugins_.erase(key);
+    drivers_.erase(key);
   }
   const bitoscope::ipc::DeviceInfo* listed = catalog_.find(driver, deviceId);
   gs::DeviceIdentity identity =
@@ -393,17 +393,17 @@ RouterOutput DeviceRouter::deviceOpened(
   return out;
 }
 
-RouterOutput DeviceRouter::pluginClosed(std::string_view pluginId, std::string_view reason) {
+RouterOutput DeviceRouter::driverClosed(std::string_view driverDeviceId, std::string_view reason) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     return out;
   }
   const Key key{split->first, split->second};
-  if (!plugins_.contains(key)) {
+  if (!drivers_.contains(key)) {
     return out;
   }
-  plugins_.erase(key);
+  drivers_.erase(key);
   if (closing_.erase(key) > 0) {
     out.log.push_back(std::format("{}/{}: its driver was closed to open device afresh", key.first, key.second));
     return out;
@@ -433,9 +433,9 @@ RouterOutput DeviceRouter::retryWaiting(std::string_view driver) {
   return out;
 }
 
-RouterOutput DeviceRouter::progressReported(std::string_view pluginId, const bitoscope::ipc::OpenProgress& progress) {
+RouterOutput DeviceRouter::progressReported(std::string_view driverDeviceId, const bitoscope::ipc::OpenProgress& progress) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     return out;
   }

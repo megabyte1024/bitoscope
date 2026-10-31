@@ -141,17 +141,17 @@ add_custom_target(bitoscope_gui_assets
 )
 add_dependencies(bitoscope_gui bitoscope_gui_assets)
 
-get_property(_bitoscope_plugins GLOBAL PROPERTY BITOSCOPE_PLUGIN_TARGETS)
-add_custom_target(bitoscope_gui_plugins
+get_property(_bitoscope_drivers GLOBAL PROPERTY BITOSCOPE_DRIVER_TARGETS)
+add_custom_target(bitoscope_gui_drivers
     COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
-            "${BITOSCOPE_PLUGIN_OUTPUT_DIR}" "$<TARGET_FILE_DIR:bitoscope_gui>/drivers"
-    COMMENT "Copying the plugins beside bitoscope_gui"
+            "${BITOSCOPE_DRIVER_OUTPUT_DIR}" "$<TARGET_FILE_DIR:bitoscope_gui>/drivers"
+    COMMENT "Copying the drivers beside bitoscope_gui"
     VERBATIM
 )
-if(_bitoscope_plugins)
-  add_dependencies(bitoscope_gui_plugins ${_bitoscope_plugins})
+if(_bitoscope_drivers)
+  add_dependencies(bitoscope_gui_drivers ${_bitoscope_drivers})
 endif()
-add_dependencies(bitoscope_gui bitoscope_gui_plugins)
+add_dependencies(bitoscope_gui bitoscope_gui_drivers)
 
 get_property(_bitoscope_decoder_plugins GLOBAL PROPERTY BITOSCOPE_DECODER_PLUGIN_TARGETS)
 add_custom_target(bitoscope_gui_decoders

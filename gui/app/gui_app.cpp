@@ -10,6 +10,7 @@
 #include <host_device_lost_adapter.h>
 #include <language_choice.h>
 #include <pipe_device_host.h>
+#include <plugin_stderr_line.h>
 #include <zoom_level.h>
 
 #include <chrono>
@@ -131,14 +132,14 @@ GuiApp::GuiApp(PlatformServices& platform, gui_prefs::StartupPreferences startup
            const std::expected<host::OpenedDevice, host::OpenRefusal>& opened) {
       applyRouterOutput(router_.deviceOpened(driver, deviceId, opened));
     };
-  eventHandlers_.onHostDeviceLost = [this](std::string_view pluginId, std::string_view reason) {
-    applyRouterOutput(router_.hostDeviceLost(pluginId, reason));
+  eventHandlers_.onHostDeviceLost = [this](std::string_view driverDeviceId, std::string_view reason) {
+    applyRouterOutput(router_.hostDeviceLost(driverDeviceId, reason));
   };
-  eventHandlers_.onPluginClosed = [this](std::string_view pluginId, std::string_view reason) {
-    applyRouterOutput(router_.pluginClosed(pluginId, reason));
+  eventHandlers_.onDriverClosed = [this](std::string_view driverDeviceId, std::string_view reason) {
+    applyRouterOutput(router_.driverClosed(driverDeviceId, reason));
   };
-  eventHandlers_.onOpenProgress = [this](std::string_view pluginId, const ipc::OpenProgress& progress) {
-    applyRouterOutput(router_.progressReported(pluginId, progress));
+  eventHandlers_.onOpenProgress = [this](std::string_view driverDeviceId, const ipc::OpenProgress& progress) {
+    applyRouterOutput(router_.progressReported(driverDeviceId, progress));
   };
 
   memoryProbe_ = makeSystemMemoryProbe();
@@ -158,12 +159,12 @@ GuiApp::GuiApp(PlatformServices& platform, gui_prefs::StartupPreferences startup
                    "Waveform draws its channels on one thread: {}", pool.error());
     }
   }
-  eventHandlers_.onStarted = [this](std::uint64_t run, std::uint32_t, std::string_view pluginId, std::uint64_t id) {
+  eventHandlers_.onStarted = [this](std::uint64_t run, std::uint32_t, std::string_view driverDeviceId, std::uint64_t id) {
     gui_session::SessionId session = 0;
     if (runOwner(run, &session) != nullptr) {
       const gui_session::Session* s = sessions_.find(session);
       logger_.logf(log::LogLevel::info, "capture", "{}: started on {} (capture id {:#018x})",
-                   s != nullptr ? s->name : std::to_string(session), pluginId, id);
+                   s != nullptr ? s->name : std::to_string(session), driverDeviceId, id);
     }
   };
   eventHandlers_.onWarning = [this](std::uint64_t run, std::uint32_t, const acquisition::AcquireWarning& warning) {
@@ -207,24 +208,25 @@ GuiApp::GuiApp(PlatformServices& platform, gui_prefs::StartupPreferences startup
 
 void GuiApp::startDevices() {
   const std::filesystem::path directory = platform_.executableDirectory() / "drivers";
-  host::PipePluginHostOptions options;
-  options.pluginDirectory = directory;
+  host::PipeDriverHostOptions options;
+  options.driverDirectory = directory;
   options.startTimeout = std::chrono::seconds(30);
   options.onStderrLine = [this](std::string_view line) {
-    logger_.log(log::LogLevel::debug, "plugins", line);
+    const log::PluginStderrLine parsed = log::parsePluginStderrLine(line);
+    logger_.log(parsed.level, "drivers", parsed.message);
   };
-  options.onLog = [this](std::string_view pluginId, const ipc::LogEvent& event) {
+  options.onLog = [this](std::string_view driverDeviceId, const ipc::LogEvent& event) {
     const log::LogLevel level = event.level == ipc::LogLevel::error     ? log::LogLevel::error
                                 : event.level == ipc::LogLevel::warning ? log::LogLevel::warning
                                 : event.level == ipc::LogLevel::info    ? log::LogLevel::info
                                                                         : log::LogLevel::debug;
-    logger_.logf(level, "plugins", "[{}] {}", pluginId, event.message);
+    logger_.logf(level, "drivers", "[{}] {}", driverDeviceId, event.message);
   };
   options.onDeviceLost = gui_events::makePostingHostDeviceLost(eventQueue_);
-  options.onClosed = gui_events::makePostingPluginClosed(eventQueue_);
+  options.onClosed = gui_events::makePostingDriverClosed(eventQueue_);
   options.onOpenProgress = gui_events::makePostingOpenProgress(eventQueue_);
-  options.onFacetEvent = [this](std::string_view pluginId, const ipc::FacetEvent& event) {
-    captureEnds_.onFacetEvent(pluginId, event);
+  options.onFacetEvent = [this](std::string_view driverDeviceId, const ipc::FacetEvent& event) {
+    captureEnds_.onFacetEvent(driverDeviceId, event);
   };
   auto host = std::make_unique<gui_devices::PipeDeviceHost>(std::move(options));
   pipeHost_ = host.get();

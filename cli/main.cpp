@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include "cli_plugins.h"
+#include "cli_drivers.h"
 #include "cli_run.h"
 #include "console_code_page.h"
 #include "display_text_file.h"

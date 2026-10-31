@@ -27,10 +27,10 @@
 #include "cli_decoder_plugins.h"
 #include "cli_exit_codes.h"
 #include "cli_output_check.h"
-#include "cli_plugins.h"
+#include "cli_drivers.h"
 #include "cli_save.h"
 #include "hdf5_capture_writer.h"
-#include "pipe_plugin_host.h"
+#include "pipe_driver_host.h"
 #include "system_memory_probe.h"
 
 namespace bitoscope::cli {
@@ -48,10 +48,10 @@ std::string pathText(const std::filesystem::path& path) {
   return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int listDrivers(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                 const std::filesystem::path& decoder_directory, std::ostream& out, std::ostream& err) {
   // WHY: List decoder plugins before the no-driver refusal, so that refusal cannot swallow a decoder listing.
-  if (opts.plugin.empty()) {
+  if (opts.driver.empty()) {
     const auto decoder_plugins = listDecoderPlugins(decoder_directory);
     if (!decoder_plugins.empty()) {
       printLine(out, "decoder plugins in " + pathText(decoder_directory) + ":");
@@ -61,8 +61,8 @@ int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::f
     }
   }
   std::vector<std::string> drivers;
-  if (!opts.plugin.empty()) {
-    auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  if (!opts.driver.empty()) {
+    auto driver = selectDriver(host.drivers(), opts.driver, directory);
     if (!driver) {
       printLine(err, "bitoscope_cli: " + driver.error());
       return kExitFailed;
@@ -92,9 +92,9 @@ int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::f
   return code;
 }
 
-int listProperties(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int listProperties(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                    std::ostream& out, std::ostream& err) {
-  auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  auto driver = selectDriver(host.drivers(), opts.driver, directory);
   if (!driver) {
     printLine(err, "bitoscope_cli: " + driver.error());
     return kExitFailed;
@@ -122,12 +122,12 @@ uint64_t steadyMs() {
 }
 
 // WHY: Self-ended watch ends whole run with exit 1: going on would look alive while devices go unnoticed.
-int watchDevices(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int watchDevices(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                  std::ostream& out, std::ostream& err, const std::function<bool()>& interrupted,
                  uint64_t listAgainIntervalMs) {
   std::vector<std::string> drivers;
-  if (!opts.plugin.empty()) {
-    auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  if (!opts.driver.empty()) {
+    auto driver = selectDriver(host.drivers(), opts.driver, directory);
     if (!driver) {
       printLine(err, "bitoscope_cli: " + driver.error());
       return kExitFailed;
@@ -206,7 +206,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
   std::ostream& raw_err = *environment.err;
   // WHY: Declared first so destroyed last: driver shutdown lines must come after CLI's own last lines.
   CaptureEvents events;
-  std::optional<host::PipePluginHost> plugins;
+  std::optional<host::PipeDriverHost> drivers;
   std::osyncstream out(raw_out);
   std::osyncstream err(raw_err);
   out.rdbuf()->set_emit_on_sync(true);
@@ -311,40 +311,40 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     decoders = std::move(*validated);
   }
 
-  const std::filesystem::path directory = pluginDirectory(opts.plugin_dir, environment.executable);
-  host::PipePluginHostOptions host_options;
-  host_options.pluginDirectory = directory;
+  const std::filesystem::path directory = driverDirectory(opts.driver_dir, environment.executable);
+  host::PipeDriverHostOptions host_options;
+  host_options.driverDirectory = directory;
   host_options.startTimeout = std::chrono::duration_cast<std::chrono::milliseconds>(opts.wait);
   host_options.onStderrLine = [&raw_err](std::string_view line) { printLine(raw_err, line); };
-  host_options.onLog = [&raw_out, &raw_err](std::string_view plugin_id, const ipc::LogEvent& event) {
-    printLine(isErrorLog(event) ? raw_err : raw_out, formatLogLine(plugin_id, event));
+  host_options.onLog = [&raw_out, &raw_err](std::string_view driver_device_id, const ipc::LogEvent& event) {
+    printLine(isErrorLog(event) ? raw_err : raw_out, formatLogLine(driver_device_id, event));
   };
-  host_options.onOpenProgress = [&raw_out](std::string_view plugin_id, const ipc::OpenProgress& progress) {
-    printLine(raw_out, describeOpenProgress(plugin_id, progress));
+  host_options.onOpenProgress = [&raw_out](std::string_view driver_device_id, const ipc::OpenProgress& progress) {
+    printLine(raw_out, describeOpenProgress(driver_device_id, progress));
   };
   host_options.onFacetEvent = [&events](std::string_view, const ipc::FacetEvent& event) {
     events.onFacetEvent(event);
   };
-  host::PipePluginHost& plugin_host = plugins.emplace(std::move(host_options));
+  host::PipeDriverHost& driver_host = drivers.emplace(std::move(host_options));
 
   if (opts.action == Action::Listen || opts.action == Action::ListDevices) {
-    return listPlugins(plugin_host, opts, directory, decoder_directory, raw_out, raw_err);
+    return listDrivers(driver_host, opts, directory, decoder_directory, raw_out, raw_err);
   }
   if (opts.action == Action::WatchDevices) {
-    return watchDevices(plugin_host, opts, directory, raw_out, raw_err, interrupted,
+    return watchDevices(driver_host, opts, directory, raw_out, raw_err, interrupted,
                         environment.list_again_interval_ms_for_test.value_or(kWatchListAgainIntervalMs));
   }
   if (opts.action == Action::ListProperties) {
-    return listProperties(plugin_host, opts, directory, raw_out, raw_err);
+    return listProperties(driver_host, opts, directory, raw_out, raw_err);
   }
 
-  auto device = openDevice(plugin_host, opts.plugin, opts.device, directory);
+  auto device = openDevice(driver_host, opts.driver, opts.device, directory);
   if (!device) {
     err << "bitoscope_cli: " << device.error() << std::endl;
     return kExitFailed;
   }
-  const std::shared_ptr<host::PluginConnection> connection = plugin_host.connection(device->plugin_id);
-  const auto plugin_closed = [connection]() -> std::optional<std::string> {
+  const std::shared_ptr<host::PluginConnection> connection = driver_host.connection(device->driver_device_id);
+  const auto driver_closed = [connection]() -> std::optional<std::string> {
     return connection ? connection->closedReason() : std::optional<std::string>("driver is not open");
   };
 
@@ -361,7 +361,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     seams.abandon_requested = interrupted;
     seams.err = &err;
     seams.stderr_columns = environment.stderr_columns;
-    seams.plugin_closed = plugin_closed;
+    seams.driver_closed = driver_closed;
     seams.device_lost = [connection]() -> std::optional<std::string> {
       return connection ? connection->deviceLostReason() : std::nullopt;
     };
@@ -371,7 +371,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     }
     seams.ring_geometry_for_test = environment.ring_geometry_for_test;
 
-    const auto acquired = runAcquire(opts, *device, plugin_host, out, seams);
+    const auto acquired = runAcquire(opts, *device, driver_host, out, seams);
     if (!acquired.has_value()) {
       err << "bitoscope_cli: " << acquired.error() << std::endl;
       return kExitFailed;
@@ -419,7 +419,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
         printLine(raw_out, "capture ended by itself: " + describeCaptureEnd(*ended));
         return;
       }
-      if (plugin_closed()) return;
+      if (driver_closed()) return;
       std::this_thread::sleep_for(50ms);
     }
   };
@@ -427,8 +427,8 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
   capture_seams.create_ring = acquisition::createHostRing;
   capture_seams.new_capture_id = acquisition::randomCaptureId;
   capture_seams.ring_geometry_for_test = environment.ring_geometry_for_test;
-  capture_seams.plugin_closed = plugin_closed;
-  const auto result = runAction(opts, *device, plugin_host, out, hold, capture_seams);
+  capture_seams.driver_closed = driver_closed;
+  const auto result = runAction(opts, *device, driver_host, out, hold, capture_seams);
   if (!result.has_value()) {
     err << "bitoscope_cli: " << result.error() << std::endl;
     return kExitFailed;

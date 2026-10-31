@@ -16,11 +16,11 @@ namespace bitoscope::cli {
 namespace br = bitoscope::bulk_ring;
 
 std::expected<std::unique_ptr<RingSummary>, std::string> RingSummary::start(br::BulkRing& ring,
-                                                                             std::string plugin_id, LineFn emit,
+                                                                             std::string driver_device_id, LineFn emit,
                                                                              RingSummaryConfig config) {
   std::unique_ptr<RingSummary> summary;
   try {
-    summary.reset(new RingSummary(ring, std::move(plugin_id), std::move(emit), std::move(config)));
+    summary.reset(new RingSummary(ring, std::move(driver_device_id), std::move(emit), std::move(config)));
     summary->thread_ = std::thread([s = summary.get()] { s->run(); });
   } catch (const std::system_error& e) {
     return std::unexpected(
@@ -32,8 +32,8 @@ std::expected<std::unique_ptr<RingSummary>, std::string> RingSummary::start(br::
   return summary;
 }
 
-RingSummary::RingSummary(br::BulkRing& ring, std::string plugin_id, LineFn emit, RingSummaryConfig config)
-    : ring_(ring), plugin_id_(std::move(plugin_id)), emit_(std::move(emit)), config_(std::move(config)) {
+RingSummary::RingSummary(br::BulkRing& ring, std::string driver_device_id, LineFn emit, RingSummaryConfig config)
+    : ring_(ring), driver_device_id_(std::move(driver_device_id)), emit_(std::move(emit)), config_(std::move(config)) {
   gaps_.expectFrom(0);
 }
 
@@ -57,7 +57,7 @@ RingSummaryTotals RingSummary::totals() const {
 
 std::string RingSummary::countLineLocked() {
   const std::string line = bitoscope::host::formatChunkSummary(
-      plugin_id_, bitoscope::host::ChunkSummary{.chunks = chunks_since_line_,
+      driver_device_id_, bitoscope::host::ChunkSummary{.chunks = chunks_since_line_,
                                                 .samples = samples_since_line_,
                                                 .sample_rate_milli_hz = last_rate_milli_hz_,
                                                 .last_first_sample_index = last_first_sample_,
@@ -122,14 +122,14 @@ void RingSummary::run() {
         const br::FailedRecord record = ring_.failedRecord();
         if (emit_) {
           emit_(std::format("[{}] la.acquisition: driver could not deliver from sample {} on ({} samples lost): {}",
-                            plugin_id_, record.at_sample, record.lost_samples,
+                            driver_device_id_, record.at_sample, record.lost_samples,
                             bitoscope::display_text::displayText(record.reason)));
         }
         finish(RingSummaryEnd::Failed);
         return;
       }
       case br::PollStatus::Invalid:
-        if (emit_) emit_(std::format("[{}] la.acquisition: bulk ring broke its protocol: {}", plugin_id_, poll.error));
+        if (emit_) emit_(std::format("[{}] la.acquisition: bulk ring broke its protocol: {}", driver_device_id_, poll.error));
         finish(RingSummaryEnd::Invalid);
         return;
     }
@@ -179,7 +179,7 @@ RingSummaryTotals RingSummary::finish(std::chrono::milliseconds limit) {
         how = std::format("stream had not ended {} ms after STOP", limit.count());
         break;
     }
-    totals_line = std::format("[{}] la.acquisition: in all {} chunk(s), {} samples, next index {}", plugin_id_,
+    totals_line = std::format("[{}] la.acquisition: in all {} chunk(s), {} samples, next index {}", driver_device_id_,
                               t.chunks, t.samples, t.next_sample);
     if (t.missing_samples != 0) totals_line += std::format(", {} samples MISSING", t.missing_samples);
     totals_line += "; " + how;

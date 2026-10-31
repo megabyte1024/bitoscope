@@ -32,21 +32,21 @@ struct GeneratorSwitchOff {
 };
 
 std::vector<GeneratorSwitchOff> switchGeneratorOutputsOff(const ipc::DeviceInfo& device,
-                                                          host::FacetTransport& transport, std::string_view pluginId);
+                                                          host::FacetTransport& transport, std::string_view driverDeviceId);
 
 void markLeftUnknown(DevicePropertiesModel& model, const std::vector<GeneratorSwitchOff>& switchedOff);
 
 std::expected<void, std::string> switchOutputOffFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                           std::string_view propertyId, bool capturing,
-                                                          host::FacetTransport& transport, std::string_view pluginId);
+                                                          host::FacetTransport& transport, std::string_view driverDeviceId);
 
 std::expected<void, std::string> resetOutputFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                       std::string_view propertyId, bool capturing,
-                                                      host::FacetTransport& transport, std::string_view pluginId);
+                                                      host::FacetTransport& transport, std::string_view driverDeviceId);
 
 std::expected<void, std::string> resetGeneratorFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                          bool capturing, host::FacetTransport& transport,
-                                                         std::string_view pluginId);
+                                                         std::string_view driverDeviceId);
 
 struct OpenedDeviceProperties {
   DevicePropertiesModel model;
@@ -54,6 +54,6 @@ struct OpenedDeviceProperties {
 };
 
 OpenedDeviceProperties openDeviceProperties(const ipc::DeviceInfo& device, host::FacetTransport& transport,
-                                            std::string_view pluginId);
+                                            std::string_view driverDeviceId);
 
 }

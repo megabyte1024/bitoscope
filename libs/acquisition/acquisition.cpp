@@ -242,7 +242,7 @@ struct DeviceRun {
   std::string stopped_for_id;
   std::optional<AcquireResult> result;
 
-  const std::string& id() const { return dev->device.plugin_id; }
+  const std::string& id() const { return dev->device.driver_device_id; }
   const std::optional<bitoscope::trigger::TriggerSpec>& trigger() const { return dev->request.trigger; }
 };
 
@@ -263,8 +263,8 @@ void endRing(SessionContext& ctx, DeviceRun& run) {
   run.ring.reset();
 }
 
-std::optional<std::string> pluginGone(const DeviceRun& run) {
-  return run.dev->plugin_closed ? run.dev->plugin_closed() : std::nullopt;
+std::optional<std::string> driverGone(const DeviceRun& run) {
+  return run.dev->driver_closed ? run.dev->driver_closed() : std::nullopt;
 }
 
 std::expected<void, std::string> prepareDevice(DeviceRun& run, const AcquisitionSeams& seams) {
@@ -443,7 +443,7 @@ std::expected<void, AttemptError> startAttempt(SessionContext& ctx, DeviceRun& r
   config.inactivity_timeout_ms = seams.inactivity_timeout_ms;
   config.now_ms = seams.now_ms;
   config.capture_id = run.request.capture_id;
-  config.plugin_id = id;
+  config.driver_device_id = id;
   config.trigger = run.trigger();
   config.pack_workers = run.dev->request.pack_workers;
   config.live_tail = run.dev->request.live_tail;
@@ -502,7 +502,7 @@ std::expected<AcquireResult, AttemptError> finishAttempt(SessionContext& ctx, De
     return fail("capture failed and nothing was saved - driver ended during capture: " + reason +
                 describeTally(*capture, capture_id));
   };
-  if (!gone) gone = pluginGone(run);
+  if (!gone) gone = driverGone(run);
   if (gone) {
     capture->requestStop();
     endRing(ctx, run);
@@ -514,7 +514,7 @@ std::expected<AcquireResult, AttemptError> finishAttempt(SessionContext& ctx, De
   endRing(ctx, run);
   if (!stopped) {
     // WHY: Ring and pipe are not ordered: ring can complete before the reader sees the driver end on its pipe.
-    if (const auto ended = pluginGone(run)) return driverEnded(*ended);
+    if (const auto ended = driverGone(run)) return driverEnded(*ended);
     attach(seams, nullptr);
     return fail(mayStillBeRunning(id, stopped.error()));
   }
@@ -661,7 +661,7 @@ std::unexpected<std::string> failSession(SessionContext& ctx, std::vector<Device
                  describeTally(*capture, run.request.capture_id);
     }
     if (!stopped) {
-      if (const auto ended = pluginGone(run)) {
+      if (const auto ended = driverGone(run)) {
         message += "; driver ended during capture on '" + run.id() + "': " + *ended;
       } else {
         message += "; " + mayStillBeRunning(run.id(), stopped.error());
@@ -682,7 +682,7 @@ std::expected<void, std::string> stopForRestart(SessionContext& ctx, DeviceRun& 
     return std::unexpected("capture failed and nothing was saved - driver ended during capture: " + reason +
                            describeTally(*capture, capture_id));
   };
-  if (const auto gone = pluginGone(run)) {
+  if (const auto gone = driverGone(run)) {
     endRing(ctx, run);
     attach(ctx.seams, nullptr);
     return driverEnded(*gone);
@@ -692,7 +692,7 @@ std::expected<void, std::string> stopForRestart(SessionContext& ctx, DeviceRun& 
   attach(ctx.seams, nullptr);
   if (!stopped) {
     // WHY: Ring and pipe are not ordered: driver's end can show on its pipe only once STOP is in flight.
-    if (const auto ended = pluginGone(run)) return driverEnded(*ended);
+    if (const auto ended = driverGone(run)) return driverEnded(*ended);
     (void)capture->finish();
     return std::unexpected(mayStillBeRunning(run.id(), stopped.error()));
   }
@@ -814,7 +814,7 @@ std::expected<SessionResult, std::string> runSessionBody(std::span<const Session
       if (!run.running) continue;
       // WHY: Driver death is checked ahead of an abandon request in the same
       // poll: integrity failure outranks the user's action.
-      if (auto gone = pluginGone(run)) {
+      if (auto gone = driverGone(run)) {
         ended.emplace_back(&run, std::move(gone));
         continue;
       }
@@ -1008,10 +1008,10 @@ std::expected<MemoryCheck, std::string> checkMemoryBeforeStart(const AcquireRequ
 }
 
 std::expected<AcquireResult, std::string> acquire(const AcquireRequest& req,
-                                                  const bitoscope::host::pipe::PluginDevice& device,
+                                                  const bitoscope::host::pipe::DriverDevice& device,
                                                   bitoscope::host::FacetTransport& transport,
                                                   const AcquisitionSeams& seams, AcquisitionEvents& events) {
-  const SessionDevice one{device, transport, req, seams.plugin_closed, seams.device_lost, seams.capture_ended};
+  const SessionDevice one{device, transport, req, seams.driver_closed, seams.device_lost, seams.capture_ended};
   const SessionRequest session{req.memory_policy, req.memory_budget_bytes, req.reserve_bytes, req.keep_on_memory_full,
                                req.start_retries};
   auto result = detail::runSession(std::span<const SessionDevice>(&one, 1), session, seams, events);

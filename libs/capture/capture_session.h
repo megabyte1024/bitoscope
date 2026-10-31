@@ -40,7 +40,7 @@ enum class FailureKind {
   Gap,
   Dropped,
   Rejected,
-  PluginIgnoresId,
+  DriverIgnoresId,
   TriggerShortfall,
   Stalled,
   EndedEarly,
@@ -58,7 +58,7 @@ struct SessionConfig {
   uint64_t inactivity_timeout_ms = 5000;
   std::function<uint64_t()> now_ms;
   uint64_t capture_id = 0;
-  std::string plugin_id;
+  std::string driver_device_id;
   std::optional<bitoscope::trigger::TriggerSpec> trigger;
   uint32_t pack_workers = 0;
   PackPoolHooks pack_hooks_for_test;

@@ -120,18 +120,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_subdirectory(libs/gui_linux)
   add_subdirectory(libs/gui_test_socket)
 endif()
-# WHY: Plugins get a directory of their own: bitoscope_cli takes every executable beside it for a plugin.
+# WHY: Drivers get a directory of their own: bitoscope_cli takes every executable beside it for a driver.
 get_property(BITOSCOPE_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(BITOSCOPE_MULTI_CONFIG)
   set(BITOSCOPE_CLI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/cli/$<CONFIG>")
 else()
   set(BITOSCOPE_CLI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/cli")
 endif()
-set(BITOSCOPE_PLUGIN_OUTPUT_DIR "${BITOSCOPE_CLI_OUTPUT_DIR}/drivers")
+set(BITOSCOPE_DRIVER_OUTPUT_DIR "${BITOSCOPE_CLI_OUTPUT_DIR}/drivers")
 
-function(bitoscope_plugin_executable target)
-  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BITOSCOPE_PLUGIN_OUTPUT_DIR}")
-  set_property(GLOBAL APPEND PROPERTY BITOSCOPE_PLUGIN_TARGETS ${target})
+function(bitoscope_driver_executable target)
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BITOSCOPE_DRIVER_OUTPUT_DIR}")
+  set_property(GLOBAL APPEND PROPERTY BITOSCOPE_DRIVER_TARGETS ${target})
 endfunction()
 
 set(BITOSCOPE_DECODER_OUTPUT_DIR "${BITOSCOPE_CLI_OUTPUT_DIR}/decoders")

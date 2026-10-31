@@ -86,7 +86,7 @@ void GuiApp::syncCaptureSettings(const gui_session::Session& session, SessionUi&
   ui.generatorSwitchOff.clear();
   if (pipeHost_ != nullptr) {
     gui_properties::OpenedDeviceProperties properties =
-      gui_properties::openDeviceProperties(*opened, pipeHost_->pluginHost(), key);
+      gui_properties::openDeviceProperties(*opened, pipeHost_->driverHost(), key);
     ui.deviceProperties.emplace(std::move(properties.model));
     ui.generatorSwitchOff = std::move(properties.generators);
   } else {
@@ -176,7 +176,7 @@ void GuiApp::sendFacetPropertiesNow(const SessionUi& ui, const std::string& face
   if (pipeHost_ == nullptr || values.empty()) {
     return;
   }
-  auto sent = pipeHost_->pluginHost().setProperties(ui.capabilitiesKey, facetName, values);
+  auto sent = pipeHost_->driverHost().setProperties(ui.capabilitiesKey, facetName, values);
   if (!sent) {
     status(trf("Could not change '{}': {}", facetName, sent.error().message));
   }
@@ -289,20 +289,20 @@ void GuiApp::startCaptureRun(gui_session::SessionId id, SessionUi& ui) {
     return;
   }
   const std::string name = session->name;
-  const std::string pluginId = session->device->driver + "/" + session->device->id;
+  const std::string driverDeviceId = session->device->driver + "/" + session->device->id;
   const std::uint64_t run = nextRun_++;
   gc::CaptureRunSetup setup;
   setup.run = run;
-  setup.device = host::pipe::PluginDevice{pluginId, *opened};
-  setup.transport = &pipeHost_->pluginHost();
-  const std::shared_ptr<host::PluginConnection> connection = pipeHost_->pluginHost().connection(pluginId);
-  setup.pluginClosed = [connection]() -> std::optional<std::string> {
+  setup.device = host::pipe::DriverDevice{driverDeviceId, *opened};
+  setup.transport = &pipeHost_->driverHost();
+  const std::shared_ptr<host::PluginConnection> connection = pipeHost_->driverHost().connection(driverDeviceId);
+  setup.driverClosed = [connection]() -> std::optional<std::string> {
     return connection ? connection->closedReason() : std::optional<std::string>("driver is not open");
   };
   setup.deviceLost = [connection]() -> std::optional<std::string> {
     return connection ? connection->deviceLostReason() : std::nullopt;
   };
-  setup.captureEnded = [this, pluginId](std::uint64_t captureId) { return captureEnds_.ended(pluginId, captureId); };
+  setup.captureEnded = [this, driverDeviceId](std::uint64_t captureId) { return captureEnds_.ended(driverDeviceId, captureId); };
   setup.request = *ui.startRequest;
   setup.probe = memoryProbe_.get();
   setup.blocks = blockSource_.get();
@@ -314,7 +314,7 @@ void GuiApp::startCaptureRun(gui_session::SessionId id, SessionUi& ui) {
   letGoDecodes(ui);
   const auto& r = setup.request.request;
   logger_.logf(log::LogLevel::info, "capture", "{}: capture {} started on {}: {} channel(s) at {}, {} samples{}", name,
-               run, pluginId, setup.request.deviceChannels.size(), gui_format::formatFrequency(r.sample_rate_milli_hz),
+               run, driverDeviceId, setup.request.deviceChannels.size(), gui_format::formatFrequency(r.sample_rate_milli_hz),
                gui_format::withThousands(setup.request.requestedSamples), r.trigger ? ", triggered" : "");
   std::shared_ptr<gc::LiveCaptureSlot> slot = ui.slot;
   gui_events::GuiEventQueue& queue = eventQueue_;

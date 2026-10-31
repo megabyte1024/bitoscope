@@ -71,7 +71,7 @@ namespace {
 class CliAcquisitionEvents final : public acquisition::AcquisitionEvents {
  public:
   CliAcquisitionEvents(std::ostream& out, std::ostream* err, std::optional<uint32_t> status_columns,
-                       uint64_t status_interval_ms, const bitoscope::host::pipe::PluginDevice& session)
+                       uint64_t status_interval_ms, const bitoscope::host::pipe::DriverDevice& session)
       : out_(out),
         err_(err),
         status_columns_(status_columns),
@@ -90,12 +90,12 @@ class CliAcquisitionEvents final : public acquisition::AcquisitionEvents {
   void warning([[maybe_unused]] uint32_t device, const acquisition::AcquireWarning& warning) override {
     out_ << "warning: " << warning.text << std::endl;
   }
-  void propertiesSet([[maybe_unused]] uint32_t device, std::string_view plugin_id,
+  void propertiesSet([[maybe_unused]] uint32_t device, std::string_view driver_device_id,
                      const std::vector<ipc::props::PropertyValue>& values) override {
-    out_ << "set on '" << plugin_id << "': " << describeAnalyzerSettings(values, session_) << std::endl;
+    out_ << "set on '" << driver_device_id << "': " << describeAnalyzerSettings(values, session_) << std::endl;
   }
-  void started([[maybe_unused]] uint32_t device, std::string_view plugin_id, [[maybe_unused]] uint64_t capture_id) override {
-    out_ << "capture started on '" << plugin_id << "'" << std::endl;
+  void started([[maybe_unused]] uint32_t device, std::string_view driver_device_id, [[maybe_unused]] uint64_t capture_id) override {
+    out_ << "capture started on '" << driver_device_id << "'" << std::endl;
     status_line_.emplace(err_, status_columns_, status_interval_ms_);
   }
   bool wantsProgress() const override { return status_line_.has_value() && status_line_->enabled(); }
@@ -132,14 +132,14 @@ class CliAcquisitionEvents final : public acquisition::AcquisitionEvents {
   std::ostream* err_;
   std::optional<uint32_t> status_columns_;
   uint64_t status_interval_ms_;
-  const bitoscope::host::pipe::PluginDevice& session_;
+  const bitoscope::host::pipe::DriverDevice& session_;
   std::optional<StatusLine> status_line_;
 };
 
 }
 
 std::expected<acquisition::AcquireResult, std::string> runAcquire(const CliOptions& opts,
-                                                                  const bitoscope::host::pipe::PluginDevice& session,
+                                                                  const bitoscope::host::pipe::DriverDevice& session,
                                                                   bitoscope::host::FacetTransport& transport,
                                                                   std::ostream& out, AcquireSeams& seams) {
   // WHY: Check output files before sending or allocating anything: a long capture that cannot be saved is worst.

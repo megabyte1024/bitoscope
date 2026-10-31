@@ -18,7 +18,7 @@
 #include "cli_exit_codes.h"
 #include "cli_output_check.h"
 #include "facet_client.h"
-#include "plugin_device.h"
+#include "driver_device.h"
 #include "raw_capture_buffer.h"
 #include "ring_pump.h"
 #include "status_line.h"
@@ -47,7 +47,7 @@ void reportShort(std::ostream& out, const bitoscope::capture::CaptureSummary& su
 }
 
 std::expected<acquisition::AcquireResult, std::string> runAcquire(const CliOptions& opts,
-                                                                  const bitoscope::host::pipe::PluginDevice& session,
+                                                                  const bitoscope::host::pipe::DriverDevice& session,
                                                                   bitoscope::host::FacetTransport& transport,
                                                                   std::ostream& out, AcquireSeams& seams);
 

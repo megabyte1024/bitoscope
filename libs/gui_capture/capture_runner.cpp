@@ -46,7 +46,7 @@ void runCapture(const CaptureRunSetup& setup, const RunControl& control, bitosco
     } else {
       std::vector<bitoscope::acquisition::SessionDevice> devices;
       devices.push_back(bitoscope::acquisition::SessionDevice{setup.device, *setup.transport, setup.request.request,
-                                                              setup.pluginClosed, setup.deviceLost,
+                                                              setup.driverClosed, setup.deviceLost,
                                                               setup.captureEnded});
       bitoscope::acquisition::SessionRequest session;
       session.memory_policy = setup.request.request.memory_policy;
@@ -69,7 +69,7 @@ void runCapture(const CaptureRunSetup& setup, const RunControl& control, bitosco
       seams.on_session = [&slot](std::shared_ptr<bitoscope::capture::CaptureSession> attempt) {
         slot.set(std::move(attempt));
       };
-      seams.plugin_closed = setup.pluginClosed;
+      seams.driver_closed = setup.driverClosed;
       seams.device_lost = setup.deviceLost;
       seams.capture_ended = setup.captureEnded;
       bitoscope::gui_events::PostingAcquisitionEvents events(queue, run);

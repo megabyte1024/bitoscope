@@ -24,7 +24,7 @@
 #include "host_ring.h"
 #include "ipc_la_acquisition.h"
 #include "ipc_properties.h"
-#include "plugin_device.h"
+#include "driver_device.h"
 #include "progress.h"
 #include "ring_config.h"
 #include "trigger_spec.h"
@@ -70,7 +70,7 @@ struct AcquisitionSeams {
   uint64_t arena_block_bytes_for_test = 0;
   bitoscope::capture::ClearingThreads* clearing_threads_for_test = nullptr;
   uint64_t progress_interval_ms = kProgressIntervalMs;
-  std::function<std::optional<std::string>()> plugin_closed{};
+  std::function<std::optional<std::string>()> driver_closed{};
   std::function<std::optional<std::string>()> device_lost{};
   std::function<std::optional<ipc::la::CaptureEnded>(uint64_t capture_id)> capture_ended{};
 };
@@ -113,9 +113,9 @@ class AcquisitionEvents {
   virtual void planned([[maybe_unused]] uint32_t device, [[maybe_unused]] const bitoscope::capture::CapturePlan& plan,
                        [[maybe_unused]] const std::optional<bitoscope::trigger::TriggerSpec>& trigger) {}
   virtual void warning([[maybe_unused]] uint32_t device, [[maybe_unused]] const AcquireWarning& warning) {}
-  virtual void propertiesSet([[maybe_unused]] uint32_t device, [[maybe_unused]] std::string_view plugin_id,
+  virtual void propertiesSet([[maybe_unused]] uint32_t device, [[maybe_unused]] std::string_view driver_device_id,
                              [[maybe_unused]] const std::vector<ipc::props::PropertyValue>& values) {}
-  virtual void started([[maybe_unused]] uint32_t device, [[maybe_unused]] std::string_view plugin_id,
+  virtual void started([[maybe_unused]] uint32_t device, [[maybe_unused]] std::string_view driver_device_id,
                        [[maybe_unused]] uint64_t capture_id) {}
   virtual bool wantsProgress() const { return false; }
   virtual void progress([[maybe_unused]] uint32_t device, [[maybe_unused]] uint64_t now_ms,
@@ -134,10 +134,10 @@ class AcquisitionEvents {
 
 // WHY: Per-device memory fields and start_retries are ignored in a session: the session's own are used.
 struct SessionDevice {
-  const bitoscope::host::pipe::PluginDevice& device;
+  const bitoscope::host::pipe::DriverDevice& device;
   bitoscope::host::FacetTransport& transport;
   AcquireRequest request;
-  std::function<std::optional<std::string>()> plugin_closed;
+  std::function<std::optional<std::string>()> driver_closed;
   std::function<std::optional<std::string>()> device_lost;
   std::function<std::optional<ipc::la::CaptureEnded>(uint64_t capture_id)> capture_ended;
 };
@@ -169,7 +169,7 @@ std::expected<MemoryCheck, std::string> checkMemoryBeforeStart(const AcquireRequ
                                                                const AcquisitionSeams& seams);
 
 std::expected<AcquireResult, std::string> acquire(const AcquireRequest& request,
-                                                  const bitoscope::host::pipe::PluginDevice& device,
+                                                  const bitoscope::host::pipe::DriverDevice& device,
                                                   bitoscope::host::FacetTransport& transport,
                                                   const AcquisitionSeams& seams, AcquisitionEvents& events);
 

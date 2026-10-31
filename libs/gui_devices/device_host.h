@@ -22,7 +22,7 @@ class DeviceHost {
  public:
   virtual ~DeviceHost() = default;
 
-  virtual std::filesystem::path pluginDirectory() const = 0;
+  virtual std::filesystem::path driverDirectory() const = 0;
 
   virtual std::vector<std::string> drivers() = 0;
 

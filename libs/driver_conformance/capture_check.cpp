@@ -19,7 +19,7 @@
 #include "capture_plan.h"
 #include "device_properties.h"
 #include "facet_access.h"
-#include "pipe_plugin_host.h"
+#include "pipe_driver_host.h"
 #include "read_samples.h"
 #include "system_memory_probe.h"
 #include "test_pattern_check.h"
@@ -96,7 +96,7 @@ std::optional<uint64_t> checkedRate(const host::pipe::LaCapabilities& caps) {
   return lowestFast ? lowestFast : highest;
 }
 
-bool listsTestPattern(const host::pipe::PluginDevice& device) {
+bool listsTestPattern(const host::pipe::DriverDevice& device) {
   for (const ipc::FacetInfo& facet : device.device.facets) {
     if (facet.name != ipc::la::kFacetName) continue;
     const ipc::props::Property* property = device_properties::findProperty(facet.properties, kTestPatternProperty);
@@ -132,7 +132,7 @@ struct Rules {
 
 class Captures {
  public:
-  Captures(host::PipePluginHost& host, host::pipe::PluginDevice device, uint64_t rate, bool testPattern,
+  Captures(host::PipeDriverHost& host, host::pipe::DriverDevice device, uint64_t rate, bool testPattern,
            const CaptureCheckOptions& options)
       : host_(host), device_(std::move(device)), rate_(rate), testPattern_(testPattern), options_(options) {}
 
@@ -159,8 +159,8 @@ class Captures {
     };
     seams.sleep_ms = [](uint64_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); };
     if (options_.inactivityTimeoutMsForTest) seams.inactivity_timeout_ms = *options_.inactivityTimeoutMsForTest;
-    const std::shared_ptr<host::PluginConnection> connection = host_.connection(device_.plugin_id);
-    seams.plugin_closed = [connection]() -> std::optional<std::string> {
+    const std::shared_ptr<host::PluginConnection> connection = host_.connection(device_.driver_device_id);
+    seams.driver_closed = [connection]() -> std::optional<std::string> {
       return connection ? connection->closedReason() : std::optional<std::string>("driver is not open");
     };
     seams.device_lost = [connection]() -> std::optional<std::string> {
@@ -190,8 +190,8 @@ class Captures {
   }
 
  private:
-  host::PipePluginHost& host_;
-  host::pipe::PluginDevice device_;
+  host::PipeDriverHost& host_;
+  host::pipe::DriverDevice device_;
   uint64_t rate_;
   bool testPattern_;
   const CaptureCheckOptions& options_;
@@ -212,11 +212,11 @@ std::span<const Rule> captureRules() { return kCaptureRules; }
 CaptureCheck runCaptureRules(const CaptureCheckOptions& options) {
   Rules rules;
   CaptureCheck check;
-  host::PipePluginHostOptions hostOptions;
-  hostOptions.pluginDirectory = options.driver.parent_path();
+  host::PipeDriverHostOptions hostOptions;
+  hostOptions.driverDirectory = options.driver.parent_path();
   hostOptions.onStderrLine = options.onDriverStderr ? options.onDriverStderr : [](std::string_view) {};
   hostOptions.startTimeout = kOpenWait;
-  host::PipePluginHost host(std::move(hostOptions));
+  host::PipeDriverHost host(std::move(hostOptions));
   const std::string driver = options.driver.stem().string();
 
   auto list = host.listDevices(driver);
@@ -243,7 +243,7 @@ CaptureCheck runCaptureRules(const CaptureCheckOptions& options) {
     check.results = rules.all();
     return check;
   }
-  host::pipe::PluginDevice device{*opened, *handshake};
+  host::pipe::DriverDevice device{*opened, *handshake};
   auto la = acquisition::makeLaClient(device, host);
   if (!la) {
     rules.failAll("device " + usable->id + ": " + la.error());

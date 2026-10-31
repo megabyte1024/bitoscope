@@ -7,7 +7,7 @@
 #include <chrono>
 #include <cstdint>
 
-namespace demo_plugin {
+namespace demo_driver {
 
 using PaceClock = std::chrono::steady_clock;
 

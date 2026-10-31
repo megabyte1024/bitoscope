@@ -36,7 +36,7 @@ struct RouterOutput {
 bitoscope::gui_session::DeviceIdentity identityOf(std::string_view driver,
                                                   const bitoscope::ipc::DeviceInfo& device);
 
-std::optional<std::pair<std::string, std::string>> splitPluginId(std::string_view pluginId);
+std::optional<std::pair<std::string, std::string>> splitDriverDeviceId(std::string_view driverDeviceId);
 
 class DeviceRouter {
  public:
@@ -60,10 +60,10 @@ class DeviceRouter {
   RouterOutput watchEnded(std::string_view driver, std::string_view reason);
   RouterOutput deviceOpened(std::string_view driver, std::string_view deviceId,
                             const std::expected<bitoscope::host::OpenedDevice, bitoscope::host::OpenRefusal>& opened);
-  RouterOutput hostDeviceLost(std::string_view pluginId, std::string_view reason);
-  RouterOutput pluginClosed(std::string_view pluginId, std::string_view reason);
+  RouterOutput hostDeviceLost(std::string_view driverDeviceId, std::string_view reason);
+  RouterOutput driverClosed(std::string_view driverDeviceId, std::string_view reason);
   RouterOutput retryWaiting(std::string_view driver);
-  RouterOutput progressReported(std::string_view pluginId, const bitoscope::ipc::OpenProgress& progress);
+  RouterOutput progressReported(std::string_view driverDeviceId, const bitoscope::ipc::OpenProgress& progress);
 
   const bitoscope::ipc::OpenProgress* openingProgress(std::string_view driver, std::string_view deviceId) const;
   const bitoscope::ipc::OpenProgress* openingProgressFor(const bitoscope::gui_session::DeviceIdentity& identity) const;
@@ -104,7 +104,7 @@ class DeviceRouter {
   std::set<Key> open_;
   std::set<Key> pending_;
   std::set<Key> replug_;
-  std::set<Key> plugins_;
+  std::set<Key> drivers_;
   std::set<Key> closing_;
   std::map<Key, bitoscope::host::OpenedDevice> opened_;
   std::map<Key, bitoscope::ipc::OpenProgress> progress_;

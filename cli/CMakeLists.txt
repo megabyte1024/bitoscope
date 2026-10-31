@@ -99,19 +99,19 @@ target_link_libraries(bitoscope_cli_annotation_filter PRIVATE bitoscope_display_
 target_compile_features(bitoscope_cli_annotation_filter PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_cli_annotation_filter)
 
-add_library(bitoscope_cli_plugins STATIC
-    cli_plugins.cpp
+add_library(bitoscope_cli_drivers STATIC
+    cli_drivers.cpp
 )
 
-target_include_directories(bitoscope_cli_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(bitoscope_cli_plugins PRIVATE bitoscope_display_text)
-target_link_libraries(bitoscope_cli_plugins PUBLIC
+target_include_directories(bitoscope_cli_drivers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bitoscope_cli_drivers PRIVATE bitoscope_display_text)
+target_link_libraries(bitoscope_cli_drivers PUBLIC
     bitoscope_plugin_host
     bitoscope_pipe_clients
     bitoscope_device_properties
 )
-target_compile_features(bitoscope_cli_plugins PUBLIC cxx_std_23)
-bitoscope_enable_warnings(bitoscope_cli_plugins)
+target_compile_features(bitoscope_cli_drivers PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_cli_drivers)
 
 add_library(bitoscope_cli_decoder_plugins STATIC
     cli_decoder_plugins.cpp
@@ -142,7 +142,7 @@ add_library(bitoscope_cli_run STATIC
 target_include_directories(bitoscope_cli_run PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bitoscope_cli_run PUBLIC
     bitoscope_cli_check_driver
-    bitoscope_cli_plugins
+    bitoscope_cli_drivers
     bitoscope_cli_acquire
     bitoscope_cli_ring_summary
     bitoscope_cli_decoder_plugins
@@ -159,7 +159,7 @@ add_executable(bitoscope_cli main.cpp)
 
 target_link_libraries(bitoscope_cli PRIVATE
     bitoscope_cli_run
-    bitoscope_cli_plugins
+    bitoscope_cli_drivers
     bitoscope_cli_status_line
     bitoscope_console_code_page
     bitoscope_display_text_file

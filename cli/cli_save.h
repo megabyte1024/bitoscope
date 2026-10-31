@@ -74,7 +74,7 @@ inline std::optional<bitoscope::capture::SavedPropertyValue> exactValue(
 // WHY: Record only analyzer properties actually sent: other facets' defaults were once saved as values in use.
 inline std::vector<bitoscope::capture::SavedProperty> capturedDeviceProperties(
     std::span<const ipc::props::PropertyValue> sent_properties,
-    const bitoscope::host::pipe::PluginDevice& session) {
+    const bitoscope::host::pipe::DriverDevice& session) {
   std::map<std::string, ipc::props::PropertyValue> analyzer_set;
   for (const ipc::props::PropertyValue& v : sent_properties) analyzer_set.emplace(v.id, v);
 
@@ -115,7 +115,7 @@ inline std::vector<bitoscope::capture::SavedProperty> capturedDeviceProperties(
 
 inline std::expected<void, std::string> finishAcquisition(const CliOptions& opts,
                                                           const acquisition::AcquireResult& result,
-                                                          const bitoscope::host::pipe::PluginDevice& session,
+                                                          const bitoscope::host::pipe::DriverDevice& session,
                                                           bitoscope::capture::CaptureWriter* writer,
                                                           std::ostream& out,
                                                           std::span<ConfiguredDecoder> decoders = {},

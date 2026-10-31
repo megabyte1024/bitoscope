@@ -22,7 +22,7 @@
 #include "pattern_signals.h"
 #include "random_signals.h"
 
-namespace demo_plugin {
+namespace demo_driver {
 
 struct DemoHooks {
   std::function<std::chrono::steady_clock::time_point()> now;

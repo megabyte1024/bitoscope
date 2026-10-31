@@ -52,21 +52,21 @@ struct GuiEventHandlers {
                      const std::expected<bitoscope::host::OpenedDevice, bitoscope::host::OpenRefusal>& opened)>
       onDeviceOpened;
 
-  std::function<void(std::string_view pluginId, std::string_view reason)> onHostDeviceLost;
+  std::function<void(std::string_view driverDeviceId, std::string_view reason)> onHostDeviceLost;
 
-  std::function<void(std::string_view pluginId, std::string_view reason)> onPluginClosed;
+  std::function<void(std::string_view driverDeviceId, std::string_view reason)> onDriverClosed;
 
-  std::function<void(std::string_view pluginId, const bitoscope::ipc::OpenProgress& progress)> onOpenProgress;
+  std::function<void(std::string_view driverDeviceId, const bitoscope::ipc::OpenProgress& progress)> onOpenProgress;
 
   std::function<void(uint64_t run, uint32_t device, const bitoscope::capture::CapturePlan& plan,
                       const std::optional<bitoscope::trigger::TriggerSpec>& trigger)>
       onPlanned;
   std::function<void(uint64_t run, uint32_t device, const bitoscope::acquisition::AcquireWarning& warning)>
       onWarning;
-  std::function<void(uint64_t run, uint32_t device, std::string_view pluginId,
+  std::function<void(uint64_t run, uint32_t device, std::string_view driverDeviceId,
                       const std::vector<bitoscope::ipc::props::PropertyValue>& values)>
       onPropertiesSet;
-  std::function<void(uint64_t run, uint32_t device, std::string_view pluginId, uint64_t captureId)> onStarted;
+  std::function<void(uint64_t run, uint32_t device, std::string_view driverDeviceId, uint64_t captureId)> onStarted;
   std::function<void(uint64_t run, uint32_t device, uint64_t nowMs,
                       const bitoscope::acquisition::Progress& progress)>
       onProgress;

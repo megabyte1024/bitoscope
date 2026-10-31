@@ -23,7 +23,7 @@
 #include "facet_client.h"
 #include "host_ring.h"
 #include "la_pipe_client.h"
-#include "plugin_device.h"
+#include "driver_device.h"
 #include "ring_config.h"
 #include "ring_summary.h"
 #include "siggen_pipe_client.h"
@@ -37,7 +37,7 @@ struct StartCaptureSeams {
   std::optional<acquisition::RingGeometry> ring_geometry_for_test;
   std::chrono::milliseconds end_wait{2000};
   RingSummaryConfig summary;
-  std::function<std::optional<std::string>()> plugin_closed;
+  std::function<std::optional<std::string>()> driver_closed;
 };
 
 namespace detail {
@@ -54,12 +54,12 @@ inline std::expected<uint64_t, std::string> toMilliHz(uint64_t hz, std::string_v
 }
 
 inline std::expected<void, std::string> runAction(const CliOptions& opts,
-                                                  const host::pipe::PluginDevice& session,
+                                                  const host::pipe::DriverDevice& session,
                                                   host::FacetTransport& transport,
                                                   std::ostream& out,
                                                   const std::function<void()>& hold,
                                                   const StartCaptureSeams& capture_seams = {}) {
-  const std::string& id = session.plugin_id;
+  const std::string& id = session.driver_device_id;
 
   switch (opts.action) {
     case Action::StartCapture: {
@@ -151,7 +151,7 @@ inline std::expected<void, std::string> runAction(const CliOptions& opts,
       auto stopped = la->stop();
       (void)(*summary)->finish(capture_seams.end_wait);
       if (!stopped.has_value()) {
-        if (const auto gone = capture_seams.plugin_closed ? capture_seams.plugin_closed() : std::nullopt) {
+        if (const auto gone = capture_seams.driver_closed ? capture_seams.driver_closed() : std::nullopt) {
           return std::unexpected("driver ended during capture on '" + id + "': " + *gone);
         }
         return std::unexpected(acquisition::mayStillBeRunning(id, stopped.error()));

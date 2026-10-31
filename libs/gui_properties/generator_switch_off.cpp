@@ -16,7 +16,7 @@ namespace {
 constexpr uint32_t kMostOutputs = 32;
 
 GeneratorSwitchOff switchFacetOff(const ipc::FacetInfo& facet, host::FacetTransport& transport,
-                                  std::string_view pluginId) {
+                                  std::string_view driverDeviceId) {
   GeneratorSwitchOff result;
   result.facet = facet.name;
   auto capabilities = host::pipe::SiggenClient::parseCapabilities(facet.info);
@@ -30,7 +30,7 @@ GeneratorSwitchOff switchFacetOff(const ipc::FacetInfo& facet, host::FacetTransp
                         std::to_string(kMostOutputs) + " are possible";
     return result;
   }
-  host::pipe::SiggenClient client(host::FacetClient(transport, std::string(pluginId), facet.name),
+  host::pipe::SiggenClient client(host::FacetClient(transport, std::string(driverDeviceId), facet.name),
                                   std::move(*capabilities));
   for (uint32_t output = 0; output < result.outputs; ++output) {
     if (auto stopped = client.stop(uint32_t{1} << output); !stopped) {
@@ -41,13 +41,13 @@ GeneratorSwitchOff switchFacetOff(const ipc::FacetInfo& facet, host::FacetTransp
 }
 
 std::expected<void, std::string> stopOutputsLeftUnknown(GeneratorSwitchOff& generator, host::FacetTransport& transport,
-                                                        std::string_view pluginId) {
+                                                        std::string_view driverDeviceId) {
   if (!generator.unreadable.empty()) {
     return std::unexpected(generator.unreadable);
   }
   host::pipe::SiggenCapabilities capabilities;
   capabilities.num_ports = generator.outputs;
-  host::pipe::SiggenClient client(host::FacetClient(transport, std::string(pluginId), generator.facet),
+  host::pipe::SiggenClient client(host::FacetClient(transport, std::string(driverDeviceId), generator.facet),
                                   std::move(capabilities));
   std::vector<OutputLeftUnknown> stillUnknown;
   std::string refusals;
@@ -67,22 +67,22 @@ std::expected<void, std::string> stopOutputsLeftUnknown(GeneratorSwitchOff& gene
 
 std::expected<void, std::string> stopOutputsLeftUnknownUnlessCapturing(GeneratorSwitchOff& generator, bool capturing,
                                                                        host::FacetTransport& transport,
-                                                                       std::string_view pluginId) {
+                                                                       std::string_view driverDeviceId) {
   // WHY: A generator command sent while its device captures has wedged real hardware: never send one then.
   if (capturing) {
     return std::unexpected(std::string("stop command is not sent while device captures, so state stays unknown"));
   }
-  return stopOutputsLeftUnknown(generator, transport, pluginId);
+  return stopOutputsLeftUnknown(generator, transport, driverDeviceId);
 }
 
 }
 
 std::vector<GeneratorSwitchOff> switchGeneratorOutputsOff(const ipc::DeviceInfo& device,
-                                                          host::FacetTransport& transport, std::string_view pluginId) {
+                                                          host::FacetTransport& transport, std::string_view driverDeviceId) {
   std::vector<GeneratorSwitchOff> results;
   for (const ipc::FacetInfo& facet : device.facets) {
     if (isGeneratorFacet(facet.name)) {
-      results.push_back(switchFacetOff(facet, transport, pluginId));
+      results.push_back(switchFacetOff(facet, transport, driverDeviceId));
     }
   }
   return results;
@@ -101,11 +101,11 @@ void markLeftUnknown(DevicePropertiesModel& model, const std::vector<GeneratorSw
 
 std::expected<void, std::string> switchOutputOffFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                           std::string_view propertyId, bool capturing,
-                                                          host::FacetTransport& transport, std::string_view pluginId) {
+                                                          host::FacetTransport& transport, std::string_view driverDeviceId) {
   if (!model.isStateUnknown(propertyId)) {
     return model.setBoolean(propertyId, false, capturing);
   }
-  if (auto stopped = stopOutputsLeftUnknown(generator, transport, pluginId); !stopped) {
+  if (auto stopped = stopOutputsLeftUnknown(generator, transport, driverDeviceId); !stopped) {
     return stopped;
   }
   model.endUnknownState();
@@ -114,9 +114,9 @@ std::expected<void, std::string> switchOutputOffFromPanel(GeneratorSwitchOff& ge
 
 std::expected<void, std::string> resetOutputFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                       std::string_view propertyId, bool capturing,
-                                                      host::FacetTransport& transport, std::string_view pluginId) {
+                                                      host::FacetTransport& transport, std::string_view driverDeviceId) {
   if (model.isStateUnknown(propertyId)) {
-    if (auto stopped = stopOutputsLeftUnknownUnlessCapturing(generator, capturing, transport, pluginId); !stopped) {
+    if (auto stopped = stopOutputsLeftUnknownUnlessCapturing(generator, capturing, transport, driverDeviceId); !stopped) {
       return stopped;
     }
     model.endUnknownState();
@@ -127,9 +127,9 @@ std::expected<void, std::string> resetOutputFromPanel(GeneratorSwitchOff& genera
 
 std::expected<void, std::string> resetGeneratorFromPanel(GeneratorSwitchOff& generator, FacetPropertiesModel& model,
                                                          bool capturing, host::FacetTransport& transport,
-                                                         std::string_view pluginId) {
+                                                         std::string_view driverDeviceId) {
   if (model.anyStateUnknown()) {
-    if (auto stopped = stopOutputsLeftUnknownUnlessCapturing(generator, capturing, transport, pluginId); !stopped) {
+    if (auto stopped = stopOutputsLeftUnknownUnlessCapturing(generator, capturing, transport, driverDeviceId); !stopped) {
       return stopped;
     }
   }
@@ -138,8 +138,8 @@ std::expected<void, std::string> resetGeneratorFromPanel(GeneratorSwitchOff& gen
 }
 
 OpenedDeviceProperties openDeviceProperties(const ipc::DeviceInfo& device, host::FacetTransport& transport,
-                                            std::string_view pluginId) {
-  std::vector<GeneratorSwitchOff> generators = switchGeneratorOutputsOff(device, transport, pluginId);
+                                            std::string_view driverDeviceId) {
+  std::vector<GeneratorSwitchOff> generators = switchGeneratorOutputsOff(device, transport, driverDeviceId);
   OpenedDeviceProperties opened{DevicePropertiesModel(device), std::move(generators)};
   markLeftUnknown(opened.model, opened.generators);
   return opened;

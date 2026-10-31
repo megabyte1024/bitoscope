@@ -50,7 +50,7 @@ class RingSummary {
   using LineFn = std::function<void(const std::string& line)>;
 
   static std::expected<std::unique_ptr<RingSummary>, std::string> start(bitoscope::bulk_ring::BulkRing& ring,
-                                                                        std::string plugin_id, LineFn emit,
+                                                                        std::string driver_device_id, LineFn emit,
                                                                         RingSummaryConfig config = {});
 
   ~RingSummary();
@@ -65,7 +65,7 @@ class RingSummary {
   RingSummaryTotals totals() const;
 
  private:
-  RingSummary(bitoscope::bulk_ring::BulkRing& ring, std::string plugin_id, LineFn emit,
+  RingSummary(bitoscope::bulk_ring::BulkRing& ring, std::string driver_device_id, LineFn emit,
               RingSummaryConfig config);
 
   void run();
@@ -74,7 +74,7 @@ class RingSummary {
   std::chrono::steady_clock::time_point now() const;
 
   bitoscope::bulk_ring::BulkRing& ring_;
-  const std::string plugin_id_;
+  const std::string driver_device_id_;
   const LineFn emit_;
   const RingSummaryConfig config_;
 
