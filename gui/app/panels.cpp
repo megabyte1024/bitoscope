@@ -304,6 +304,10 @@ void GuiApp::drawMenuBar() {
       tooltip(saveBlockedText(*saveBlocked).c_str());
     }
     ImGui::Separator();
+    if (ImGui::MenuItem(tr("Update firmware..."))) {
+      openFirmwareWindow();
+    }
+    ImGui::Separator();
     if (ImGui::MenuItem(tr("Exit"))) {
       platform_.requestClose();
     }
@@ -599,6 +603,7 @@ void GuiApp::drawFrame() {
     drawKeyboardShortcuts();
   }
   drawNewSessionWizard();
+  drawFirmwareWindow();
   drawCloseModal();
   drawReplaceModal();
   drawFileErrorModal();
@@ -941,10 +946,17 @@ void GuiApp::drawDeviceProperties(SessionUi& ui) {
   const bool capturing = ui.capture.running();
   std::vector<std::string> propertyFacets;
   std::vector<std::string> generatorFacets;
-  for (const std::string& facetName : ui.deviceProperties->facetNames()) {
+  for (const std::string& facetName : ui.deviceProperties->facetNamesWithProperties()) {
     (gui_properties::isGeneratorFacet(facetName) ? generatorFacets : propertyFacets).push_back(facetName);
   }
-  drawPropertySection(ui, tr("Properties"), propertyFacets, capturing);
+  if (propertyFacets.empty()) {
+    ImGui::SeparatorText(tr("Properties"));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextUnformatted(tr("(no properties)"));
+    ImGui::PopStyleColor();
+  } else {
+    drawPropertySection(ui, tr("Properties"), propertyFacets, capturing);
+  }
 
   if (!generatorFacets.empty()) {
     drawPropertySection(ui, tr("Generator"), generatorFacets, capturing);
@@ -1002,7 +1014,7 @@ void GuiApp::resetFacetToDefault(SessionUi& ui, const std::string& facetName,
     std::find_if(ui.generatorSwitchOff.begin(), ui.generatorSwitchOff.end(),
                  [&](const gui_properties::GeneratorSwitchOff& g) { return g.facet == facetName; });
   if (generator != ui.generatorSwitchOff.end() && pipeHost_ != nullptr) {
-    auto reset = gui_properties::resetGeneratorFromPanel(*generator, model, capturing, pipeHost_->pluginHost(),
+    auto reset = gui_properties::resetGeneratorFromPanel(*generator, model, capturing, pipeHost_->driverHost(),
                                                          ui.capabilitiesKey);
     if (!reset) {
       status(trf("Could not change '{}': {}", facetName, reset.error()));
@@ -1152,7 +1164,7 @@ void GuiApp::drawPropertyRow(SessionUi& ui, const std::string& facetName, gui_pr
       std::expected<void, std::string> set;
       if (!checked && generator != ui.generatorSwitchOff.end() && pipeHost_ != nullptr) {
         set = gui_properties::switchOutputOffFromPanel(*generator, model, property.id, capturing,
-                                                       pipeHost_->pluginHost(), ui.capabilitiesKey);
+                                                       pipeHost_->driverHost(), ui.capabilitiesKey);
         if (!set) {
           status(trf("Could not change '{}': {}", property.label, set.error()));
         }
@@ -1208,7 +1220,7 @@ void GuiApp::drawPropertyRow(SessionUi& ui, const std::string& facetName, gui_pr
                      [&](const gui_properties::GeneratorSwitchOff& g) { return g.facet == facetName; });
       std::expected<void, std::string> reset;
       if (generator != ui.generatorSwitchOff.end() && pipeHost_ != nullptr) {
-        reset = gui_properties::resetOutputFromPanel(*generator, model, property.id, capturing, pipeHost_->pluginHost(),
+        reset = gui_properties::resetOutputFromPanel(*generator, model, property.id, capturing, pipeHost_->driverHost(),
                                                      ui.capabilitiesKey);
       } else {
         model.resetToDefault(property.id);

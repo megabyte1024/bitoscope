@@ -53,6 +53,7 @@ struct FileChooserTexts {
   std::string_view allFilesName = {};
   std::string_view folder = {};
   std::string_view fileName = {};
+  std::string_view extension = "h5";
 };
 
 struct FileChooserRequest {

@@ -174,6 +174,15 @@ constexpr std::string_view kUsageText =
     "      --duty PERCENT    Duty cycle, 0-100 (default 50)\n"
     "  --pwm-stop        Stop PWM outputs.\n"
     "      --ports MASK      Port bitmask (required)\n"
+    "  --flash-firmware FILE  Flash firmware FILE onto device (FNIRSI .bin file). Takes about 5 minutes: do\n"
+    "                    not unplug device meanwhile. Ctrl+C stops update at once before FPGA image\n"
+    "                    starts. Inside FPGA image, first Ctrl+C warns that analyzer cannot capture\n"
+    "                    until update completes; second Ctrl+C within 5 s stops update anyway.\n"
+    "                    Ends with capture check; exit code 0 only when update and check passed.\n"
+    "      --model 16|32     Model of device in bootloader (its model is unknown there)\n"
+    "      --confirm-unknown-file   Flash file that is none of known FNIRSI files\n"
+    "      --confirm-other-model    Flash file made for other model (may damage device)\n"
+    "  --start-program   Leave bootloader: start device's program.\n"
     "  --check-driver EXE  Check driver executable EXE before it ships: its device lists, watch\n"
     "                    and opening, then captures from first available device at its lowest\n"
     "                    rate of at least 1 MHz: 1, 63, 64, 65 and 1'000'003 samples, first N\n"
@@ -228,10 +237,11 @@ constexpr unsigned bit(Action a) { return 1u << static_cast<unsigned>(a); }
 constexpr unsigned kAcquire = bit(Action::Acquire);
 
 constexpr unsigned kAnyAction = bit(Action::StartCapture) | bit(Action::Stop) | kAcquire |
-                                       bit(Action::PwmStart) | bit(Action::PwmStop);
-constexpr unsigned kPluginAction =
+                                       bit(Action::PwmStart) | bit(Action::PwmStop) | bit(Action::FlashFirmware) |
+                                       bit(Action::StartProgram);
+constexpr unsigned kDriverAction =
     kAnyAction | bit(Action::ListDevices) | bit(Action::WatchDevices) | bit(Action::ListProperties);
-constexpr unsigned kPluginDirAction = kPluginAction | bit(Action::Listen);
+constexpr unsigned kDriverDirAction = kDriverAction | bit(Action::Listen);
 constexpr unsigned kDeviceAction = kAnyAction | bit(Action::ListProperties);
 constexpr unsigned kDecoderDirAction = kAcquire | bit(Action::Listen) | bit(Action::ListDevices);
 
@@ -244,18 +254,22 @@ struct OptionSpec {
   bool repeatable = false;
 };
 
-constexpr std::array<OptionSpec, 40> kOptions = {{
+constexpr std::array<OptionSpec, 44> kOptions = {{
     {"--check-driver", true, bit(Action::CheckDriver)},
-    {"--driver", true, kPluginAction},
+    {"--driver", true, kDriverAction},
     {"--device", true, kDeviceAction},
-    {"--driver-dir", true, kPluginDirAction},
-    {"--wait-s", true, kPluginDirAction},
+    {"--driver-dir", true, kDriverDirAction},
+    {"--wait-s", true, kDriverDirAction},
     {"--rate-hz", true, bit(Action::StartCapture)},
     {"--channel-mask", true, bit(Action::StartCapture)},
     {"--limit", true, bit(Action::StartCapture)},
     {"--buffered", false, bit(Action::StartCapture)},
     {"--duration-s", true, bit(Action::StartCapture) | bit(Action::WatchDevices)},
     {"--configure", true, bit(Action::StartCapture), kRepeatable},
+    {"--flash-firmware", true, bit(Action::FlashFirmware)},
+    {"--model", true, bit(Action::FlashFirmware)},
+    {"--confirm-unknown-file", false, bit(Action::FlashFirmware)},
+    {"--confirm-other-model", false, bit(Action::FlashFirmware)},
     {"--ports", true, bit(Action::PwmStart) | bit(Action::PwmStop)},
     {"--freq-hz", true, bit(Action::PwmStart)},
     {"--duty", true, bit(Action::PwmStart)},
@@ -369,6 +383,7 @@ std::optional<Action> actionForFlag(std::string_view flag) {
   if (flag == "--stop") return Action::Stop;
   if (flag == "--pwm-start") return Action::PwmStart;
   if (flag == "--pwm-stop") return Action::PwmStop;
+  if (flag == "--start-program") return Action::StartProgram;
   if (flag == "--list-devices") return Action::ListDevices;
   if (flag == "--watch-devices") return Action::WatchDevices;
   if (flag == "--list-properties") return Action::ListProperties;
@@ -381,6 +396,8 @@ std::string_view flagForAction(Action action) {
     case Action::Stop: return "--stop";
     case Action::PwmStart: return "--pwm-start";
     case Action::PwmStop: return "--pwm-stop";
+    case Action::FlashFirmware: return "--flash-firmware";
+    case Action::StartProgram: return "--start-program";
     case Action::Help: return "--help";
     case Action::Acquire: return "--samples/--time";
     case Action::ListDevices: return "--list-devices";
@@ -442,6 +459,9 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
   if (!action.has_value() && std::ranges::find(args, std::string_view("--check-driver")) != args.end()) {
     action = Action::CheckDriver;
   }
+  if (!action.has_value() && std::ranges::find(args, std::string_view("--flash-firmware")) != args.end()) {
+    action = Action::FlashFirmware;
+  }
   if (!action.has_value() &&
       std::any_of(args.begin(), args.end(),
                   [](std::string_view a) { return a == "--samples" || a == "--time"; })) {
@@ -482,7 +502,7 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
     if (!action.has_value() && (spec->actions & args_detail::bit(Action::Listen)) == 0) {
       return std::unexpected(std::string(arg) +
                               " needs action (--samples/--time, --start-capture, --stop, --pwm-start, "
-                              "--pwm-stop or --list-devices); without one, bitoscope_cli lists every driver "
+                              "--pwm-stop, --flash-firmware, --start-program or --list-devices); without one, bitoscope_cli lists every driver "
                               "in driver directory");
     }
     if (action.has_value() && (spec->actions & args_detail::bit(*action)) == 0) {
@@ -497,6 +517,8 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
     if (!spec->takes_value) {
       if (arg == "--buffered") opts.buffered = true;
       if (arg == "--quiet") opts.quiet = true;
+      if (arg == "--confirm-unknown-file") opts.confirm_unknown_file = true;
+      if (arg == "--confirm-other-model") opts.confirm_other_model = true;
       continue;
     }
 
@@ -507,18 +529,30 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
     const std::string_view text = args[++i];
 
     if (arg == "--driver") {
-      opts.plugin = std::string(text);
+      opts.driver = std::string(text);
       continue;
     }
     if (arg == "--check-driver") {
       opts.check_driver = std::string(text);
       continue;
     }
+    if (arg == "--flash-firmware") {
+      if (text.empty()) return std::unexpected("--flash-firmware needs firmware file");
+      opts.firmware_file = std::string(text);
+      continue;
+    }
+    if (arg == "--model") {
+      if (text != "16" && text != "32") {
+        return std::unexpected("--model: '" + std::string(text) + "' is no analyzer model; give 16 or 32 (channels)");
+      }
+      opts.firmware_model = std::string(text);
+      continue;
+    }
     if (arg == "--device" || arg == "--driver-dir") {
       if (text.empty()) {
         return std::unexpected(std::string(arg) + (arg == "--device" ? " needs device id" : " needs directory"));
       }
-      (arg == "--device" ? opts.device : opts.plugin_dir) = std::string(text);
+      (arg == "--device" ? opts.device : opts.driver_dir) = std::string(text);
       continue;
     }
 
@@ -872,6 +906,10 @@ std::expected<CliOptions, std::string> parseArgs(std::span<const std::string_vie
     case Action::PwmStop:
       required = require("--ports");
       break;
+    case Action::FlashFirmware:
+      required = require("--flash-firmware");
+      break;
+    case Action::StartProgram:
     case Action::Listen:
     case Action::Help:
     case Action::Stop:

@@ -18,6 +18,7 @@ add_library(bitoscope_gui_app STATIC
     app/decoder_panel.cpp
     app/find_box.cpp
     app/find_box.h
+    app/firmware_panel.cpp
     app/gui_app.cpp
     app/gui_app.h
     app/panels.cpp
@@ -42,7 +43,7 @@ target_link_libraries(bitoscope_gui_app PUBLIC bitoscope_imgui bitoscope_svg_ras
     bitoscope_gui_frame_pacing bitoscope_gui_devices
     bitoscope_gui_capture bitoscope_gui_properties bitoscope_gui_session_file bitoscope_gui_decode
     bitoscope_gui_popup bitoscope_gui_dock_focus bitoscope_gui_lane_header bitoscope_gui_text_field
-    bitoscope_gui_frame_probe)
+    bitoscope_gui_frame_probe bitoscope_gui_firmware)
 if(BITOSCOPE_GUI_TEST_HOOK)
   target_compile_definitions(bitoscope_gui_app PRIVATE BITOSCOPE_GUI_TEST_HOOK)
 endif()
@@ -141,17 +142,17 @@ add_custom_target(bitoscope_gui_assets
 )
 add_dependencies(bitoscope_gui bitoscope_gui_assets)
 
-get_property(_bitoscope_plugins GLOBAL PROPERTY BITOSCOPE_PLUGIN_TARGETS)
-add_custom_target(bitoscope_gui_plugins
+get_property(_bitoscope_drivers GLOBAL PROPERTY BITOSCOPE_DRIVER_TARGETS)
+add_custom_target(bitoscope_gui_drivers
     COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
-            "${BITOSCOPE_PLUGIN_OUTPUT_DIR}" "$<TARGET_FILE_DIR:bitoscope_gui>/drivers"
-    COMMENT "Copying the plugins beside bitoscope_gui"
+            "${BITOSCOPE_DRIVER_OUTPUT_DIR}" "$<TARGET_FILE_DIR:bitoscope_gui>/drivers"
+    COMMENT "Copying the drivers beside bitoscope_gui"
     VERBATIM
 )
-if(_bitoscope_plugins)
-  add_dependencies(bitoscope_gui_plugins ${_bitoscope_plugins})
+if(_bitoscope_drivers)
+  add_dependencies(bitoscope_gui_drivers ${_bitoscope_drivers})
 endif()
-add_dependencies(bitoscope_gui bitoscope_gui_plugins)
+add_dependencies(bitoscope_gui bitoscope_gui_drivers)
 
 get_property(_bitoscope_decoder_plugins GLOBAL PROPERTY BITOSCOPE_DECODER_PLUGIN_TARGETS)
 add_custom_target(bitoscope_gui_decoders

@@ -158,11 +158,11 @@ std::expected<void, std::string> CaptureSession::submit(const bitoscope::host::C
   if (config_.capture_id != 0 && chunk.capture_id != config_.capture_id) {
     if (chunk.capture_id == 0) {
       if (failure_ || reached_) return {};
-      return fail(FailureKind::PluginIgnoresId, 0, 0,
+      return fail(FailureKind::DriverIgnoresId, 0, 0,
                   std::format("driver '{}' sent chunk without capture id ({:#x}) that START "
                               "carried, so it does not echo it and its chunks cannot be told from "
                               "earlier capture's",
-                              config_.plugin_id, config_.capture_id));
+                              config_.driver_device_id, config_.capture_id));
     }
     ++foreign_chunks_;
     return {};
@@ -240,7 +240,7 @@ void CaptureSession::failSource(uint64_t at_sample, uint64_t lost_samples,
           : std::format("lost samples {} to {} ({} samples) and delivered nothing after them",
                         at_sample, at_sample + lost_samples - 1, lost_samples);
   (void)fail(FailureKind::Dropped, at_sample, lost_samples,
-             std::format("driver '{}' {}: {}", config_.plugin_id, lost, reason));
+             std::format("driver '{}' {}: {}", config_.driver_device_id, lost, reason));
 }
 
 void CaptureSession::sourceEnded() {
@@ -254,7 +254,7 @@ void CaptureSession::sourceEnded() {
     (void)fail(FailureKind::EndedEarly, got, 0,
                std::format("stream ended early: driver '{}' ended it after {}, while "
                            "trigger was still waiting to fire",
-                           config_.plugin_id, arrived));
+                           config_.driver_device_id, arrived));
     return;
   }
   const uint64_t end = triggered() ? *absolute_end_ : buffer_.plan().totalSamples();
@@ -262,7 +262,7 @@ void CaptureSession::sourceEnded() {
   (void)fail(FailureKind::EndedEarly, got, lost,
              std::format("stream ended early: driver '{}' ended it after {}, but capture "
                          "runs to sample {}; samples {} to {} ({} samples) never arrived",
-                         config_.plugin_id, arrived, end - 1, got, end - 1, lost));
+                         config_.driver_device_id, arrived, end - 1, got, end - 1, lost));
 }
 
 void CaptureSession::sourceInvalid(std::string_view reason) {
@@ -270,7 +270,7 @@ void CaptureSession::sourceInvalid(std::string_view reason) {
   adoptCommitFailureLocked();
   if (finished_ || failure_ || reached_) return;
   (void)fail(FailureKind::Rejected, next_expected_, 0,
-             std::format("bulk ring from driver '{}' is not valid: {}", config_.plugin_id,
+             std::format("bulk ring from driver '{}' is not valid: {}", config_.driver_device_id,
                          reason));
 }
 

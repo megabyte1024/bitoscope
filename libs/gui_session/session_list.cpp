@@ -182,8 +182,18 @@ std::string reasonText(const DeviceDisabledReason& reason) {
       return "Connecting to device";
     case DeviceReasonKind::OpenedFromFile:
       return std::format("Opened from file: {}", reason.detail);
+    case DeviceReasonKind::Updating:
+      return "Firmware update runs on device";
   }
   return {};  // WHY: A switch over an enum class with no default keeps MSVC /W4 quiet and flags a future unhandled case.
+}
+
+void SessionList::setDeviceUpdating(std::string_view driver, std::string_view deviceId, bool updating) {
+  for (Session& s : sessions_) {
+    if (s.device.has_value() && s.device->driver == driver && s.device->id == deviceId) {
+      s.updatingFirmware = updating;
+    }
+  }
 }
 
 void SessionList::setDevice(SessionId id, DeviceIdentity device) {
@@ -282,6 +292,9 @@ std::optional<DeviceDisabledReason> SessionList::startDisabledReason(SessionId i
     return DeviceDisabledReason{.kind = s->waitsForDevice() ? DeviceReasonKind::Waiting : DeviceReasonKind::Lost,
                                 .detail = s->lostReason,
                                 .unavailable = s->unavailable};
+  }
+  if (s->updatingFirmware) {
+    return DeviceDisabledReason{.kind = DeviceReasonKind::Updating, .detail = {}};
   }
   if (s->deviceState == DeviceState::Connecting) {
     return DeviceDisabledReason{.kind = DeviceReasonKind::Connecting, .detail = {}};

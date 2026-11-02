@@ -190,7 +190,7 @@ msgstr ""
 msgid "Don't save"
 msgstr ""
 
-#: gui/app/capture_panel.cpp gui/app/panels.cpp gui/app/session_file_panel.cpp
+#: gui/app/capture_panel.cpp gui/app/firmware_panel.cpp gui/app/panels.cpp gui/app/session_file_panel.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -404,6 +404,166 @@ msgstr ""
 msgid "Close (Escape)"
 msgstr ""
 
+#: gui/app/firmware_panel.cpp
+msgid "Choose firmware file"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Firmware file"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp gui/app/session_file_panel.cpp
+msgid "All files"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "File dialog could not be shown: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update firmware"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Step 1 of 3: Choose device"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Step 2 of 3: Choose firmware file"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Step 3 of 3: Update firmware"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp gui/app/session_file_panel.cpp
+msgid "Opening {}..."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "No device offers firmware update. Connect analyzer and wait until it is listed."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "capturing"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp gui/app/session_file_panel.cpp
+msgid "Device: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer is waiting for firmware, so its model is unknown. Choose it below."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Model of analyzer:"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "16 channels"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "32 channels"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Firmware file:"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Browse..."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Check file"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Flash file that is none of known FNIRSI files"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Flash file made for other model (may damage analyzer)"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Firmware file: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update takes about 5 minutes: do not unplug device meanwhile."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Sending {} image: {} of {} bytes"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Finishing: analyzer restarts"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Preparing..."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Attempt {} of {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Writes sent again: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update finished. Analyzer restarted with its new firmware."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update did not finish: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer cannot capture until update completes."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Stopping now leaves analyzer unable to capture until update is run again to its end."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Stopping inside FPGA image leaves analyzer unable to capture until update is run again to its end."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp gui/app/panels.cpp
+msgid "< Back"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp gui/app/panels.cpp
+msgid "Next >"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Start update"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Start analyzer's program"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Stop anyway"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Stop update"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Close"
+msgstr ""
+
 #: gui/app/gui_app.cpp
 msgid "Device in use by {} until its capture ends"
 msgstr ""
@@ -426,6 +586,10 @@ msgstr ""
 
 #: gui/app/gui_app.cpp
 msgid "Opened from file, with no device: {}"
+msgstr ""
+
+#: gui/app/gui_app.cpp
+msgid "Firmware update runs on device"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -520,6 +684,10 @@ msgstr ""
 
 #: gui/app/panels.cpp
 msgid "Save as..."
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Update firmware..."
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -812,6 +980,10 @@ msgid "Properties of this device are not known yet"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "(no properties)"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "Generator"
 msgstr ""
 
@@ -825,10 +997,6 @@ msgstr ""
 
 #: gui/app/panels.cpp
 msgid "Reset all"
-msgstr ""
-
-#: gui/app/panels.cpp
-msgid "(no properties)"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -921,14 +1089,6 @@ msgstr ""
 
 #: gui/app/panels.cpp
 msgid "Device watch stopped: {}"
-msgstr ""
-
-#: gui/app/panels.cpp
-msgid "< Back"
-msgstr ""
-
-#: gui/app/panels.cpp
-msgid "Next >"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -1092,10 +1252,6 @@ msgid "bitoscope session"
 msgstr ""
 
 #: gui/app/session_file_panel.cpp
-msgid "All files"
-msgstr ""
-
-#: gui/app/session_file_panel.cpp
 msgid "Open session"
 msgstr ""
 
@@ -1140,10 +1296,6 @@ msgid "Saved"
 msgstr ""
 
 #: gui/app/session_file_panel.cpp
-msgid "Opening {}..."
-msgstr ""
-
-#: gui/app/session_file_panel.cpp
 msgid "{} could not be opened: {}"
 msgstr ""
 
@@ -1153,10 +1305,6 @@ msgstr ""
 
 #: gui/app/session_file_panel.cpp
 msgid "Opened from {}"
-msgstr ""
-
-#: gui/app/session_file_panel.cpp
-msgid "Device: {}"
 msgstr ""
 
 #: gui/app/session_file_panel.cpp

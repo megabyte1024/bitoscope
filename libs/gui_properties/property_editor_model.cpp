@@ -249,6 +249,14 @@ DevicePropertiesModel::DevicePropertiesModel(const ipc::DeviceInfo& device) {
   }
 }
 
+std::vector<std::string> DevicePropertiesModel::facetNamesWithProperties() const {
+  std::vector<std::string> names;
+  for (const std::string& name : order_) {
+    if (!facets_.at(name).displayTree().empty()) names.push_back(name);
+  }
+  return names;
+}
+
 FacetPropertiesModel* DevicePropertiesModel::facet(std::string_view name) {
   const auto it = facets_.find(name);
   return it == facets_.end() ? nullptr : &it->second;

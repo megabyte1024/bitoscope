@@ -19,8 +19,8 @@ namespace bitoscope::gui_capture {
 
 class CaptureEndRecorder {
  public:
-  void onFacetEvent(std::string_view pluginId, const bitoscope::ipc::FacetEvent& event);
-  std::optional<bitoscope::ipc::la::CaptureEnded> ended(std::string_view pluginId, uint64_t captureId) const;
+  void onFacetEvent(std::string_view driverDeviceId, const bitoscope::ipc::FacetEvent& event);
+  std::optional<bitoscope::ipc::la::CaptureEnded> ended(std::string_view driverDeviceId, uint64_t captureId) const;
 
  private:
   mutable std::mutex mutex_;

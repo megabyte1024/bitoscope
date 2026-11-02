@@ -7,7 +7,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <algorithm>
 #include <expected>
+#include <format>
 #include <functional>
 #include <memory>
 #include <ostream>
@@ -19,6 +21,7 @@
 #include <vector>
 
 #include "capture_allocator.h"
+#include "capture_plan.h"
 #include "cli_acquire.h"
 #include "cli_args.h"
 #include "cli_check_driver.h"
@@ -27,10 +30,11 @@
 #include "cli_decoder_plugins.h"
 #include "cli_exit_codes.h"
 #include "cli_output_check.h"
-#include "cli_plugins.h"
+#include "cli_drivers.h"
+#include "cli_firmware.h"
 #include "cli_save.h"
 #include "hdf5_capture_writer.h"
-#include "pipe_plugin_host.h"
+#include "pipe_driver_host.h"
 #include "system_memory_probe.h"
 
 namespace bitoscope::cli {
@@ -48,10 +52,10 @@ std::string pathText(const std::filesystem::path& path) {
   return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int listDrivers(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                 const std::filesystem::path& decoder_directory, std::ostream& out, std::ostream& err) {
   // WHY: List decoder plugins before the no-driver refusal, so that refusal cannot swallow a decoder listing.
-  if (opts.plugin.empty()) {
+  if (opts.driver.empty()) {
     const auto decoder_plugins = listDecoderPlugins(decoder_directory);
     if (!decoder_plugins.empty()) {
       printLine(out, "decoder plugins in " + pathText(decoder_directory) + ":");
@@ -61,8 +65,8 @@ int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::f
     }
   }
   std::vector<std::string> drivers;
-  if (!opts.plugin.empty()) {
-    auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  if (!opts.driver.empty()) {
+    auto driver = selectDriver(host.drivers(), opts.driver, directory);
     if (!driver) {
       printLine(err, "bitoscope_cli: " + driver.error());
       return kExitFailed;
@@ -92,9 +96,9 @@ int listPlugins(host::PipePluginHost& host, const CliOptions& opts, const std::f
   return code;
 }
 
-int listProperties(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int listProperties(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                    std::ostream& out, std::ostream& err) {
-  auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  auto driver = selectDriver(host.drivers(), opts.driver, directory);
   if (!driver) {
     printLine(err, "bitoscope_cli: " + driver.error());
     return kExitFailed;
@@ -122,12 +126,12 @@ uint64_t steadyMs() {
 }
 
 // WHY: Self-ended watch ends whole run with exit 1: going on would look alive while devices go unnoticed.
-int watchDevices(host::PipePluginHost& host, const CliOptions& opts, const std::filesystem::path& directory,
+int watchDevices(host::PipeDriverHost& host, const CliOptions& opts, const std::filesystem::path& directory,
                  std::ostream& out, std::ostream& err, const std::function<bool()>& interrupted,
                  uint64_t listAgainIntervalMs) {
   std::vector<std::string> drivers;
-  if (!opts.plugin.empty()) {
-    auto driver = selectDriver(host.drivers(), opts.plugin, directory);
+  if (!opts.driver.empty()) {
+    auto driver = selectDriver(host.drivers(), opts.driver, directory);
     if (!driver) {
       printLine(err, "bitoscope_cli: " + driver.error());
       return kExitFailed;
@@ -201,12 +205,69 @@ int watchDevices(host::PipePluginHost& host, const CliOptions& opts, const std::
 
 }
 
+namespace {
+
+std::expected<std::string, std::string> captureCheckAfterUpdate(const host::pipe::DriverDevice& session,
+                                                                host::PipeDriverHost& driver_host,
+                                                                const CaptureEvents& events, std::ostream& out,
+                                                                std::ostream& err,
+                                                                const std::function<bool()>& interrupted) {
+  constexpr uint64_t kCheckSamples = 1'000'000;
+  constexpr uint64_t kPreferredRateMilliHz = 10'000'000'000ull;
+  constexpr uint64_t kLowestUsefulRateMilliHz = 1'000'000'000ull;
+  constexpr uint32_t kCheckChannels = 4;
+
+  auto la = acquisition::makeLaClient(session, driver_host);
+  if (!la) return std::unexpected(la.error());
+  const auto& rates = la->capabilities().supported_sample_rates_milli_hz;
+  uint64_t rate = rates.empty() ? kPreferredRateMilliHz : rates.front();
+  if (std::ranges::find(rates, kPreferredRateMilliHz) != rates.end()) {
+    rate = kPreferredRateMilliHz;
+  } else if (const auto usable = std::ranges::find_if(rates, [&](uint64_t r) { return r >= kLowestUsefulRateMilliHz; });
+             usable != rates.end()) {
+    rate = *usable;
+  }
+  const uint32_t channels = (std::min)(kCheckChannels, la->capabilities().num_channels);
+  if (channels == 0) return std::unexpected("analyzer offers no channels");
+
+  CliOptions check;
+  check.action = Action::Acquire;
+  check.sample_rate_milli_hz = rate;
+  check.channel_mask = (1u << channels) - 1;
+  check.total_samples = kCheckSamples;
+
+  const std::shared_ptr<host::PluginConnection> connection = driver_host.connection(session.driver_device_id);
+  bitoscope::capture::SystemMemoryProbe probe;
+  bitoscope::capture::SystemBlockSource blocks;
+  AcquireSeams seams{probe, blocks};
+  seams.samples_per_window = windowSizeForCapture(check);
+  seams.create_ring = acquisition::createHostRing;
+  seams.now_ms = steadyMs;
+  seams.sleep_ms = [](uint64_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); };
+  seams.abandon_requested = interrupted;
+  seams.err = &err;
+  seams.driver_closed = [connection]() -> std::optional<std::string> {
+    return connection ? connection->closedReason() : std::optional<std::string>("driver is not open");
+  };
+  seams.device_lost = [connection]() -> std::optional<std::string> {
+    return connection ? connection->deviceLostReason() : std::nullopt;
+  };
+  seams.capture_ended = [&events](uint64_t capture_id) { return events.ended(capture_id); };
+  const auto checked = checkCaptureAfterUpdate(check, session, driver_host, out, seams);
+  if (!checked) return std::unexpected(checked.error());
+  return std::format("capture check passed: {} samples on {} channels at {} MHz",
+                     bitoscope::capture::plan_detail::withThousands(kCheckSamples), channels, rate / 1'000'000'000);
+}
+
+}
+
 int runCli(std::span<const std::string_view> args, const CliEnvironment& environment) {
   std::ostream& raw_out = *environment.out;
   std::ostream& raw_err = *environment.err;
   // WHY: Declared first so destroyed last: driver shutdown lines must come after CLI's own last lines.
   CaptureEvents events;
-  std::optional<host::PipePluginHost> plugins;
+  FirmwareEvents firmware_events;
+  std::optional<host::PipeDriverHost> drivers;
   std::osyncstream out(raw_out);
   std::osyncstream err(raw_err);
   out.rdbuf()->set_emit_on_sync(true);
@@ -311,40 +372,41 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     decoders = std::move(*validated);
   }
 
-  const std::filesystem::path directory = pluginDirectory(opts.plugin_dir, environment.executable);
-  host::PipePluginHostOptions host_options;
-  host_options.pluginDirectory = directory;
+  const std::filesystem::path directory = driverDirectory(opts.driver_dir, environment.executable);
+  host::PipeDriverHostOptions host_options;
+  host_options.driverDirectory = directory;
   host_options.startTimeout = std::chrono::duration_cast<std::chrono::milliseconds>(opts.wait);
   host_options.onStderrLine = [&raw_err](std::string_view line) { printLine(raw_err, line); };
-  host_options.onLog = [&raw_out, &raw_err](std::string_view plugin_id, const ipc::LogEvent& event) {
-    printLine(isErrorLog(event) ? raw_err : raw_out, formatLogLine(plugin_id, event));
+  host_options.onLog = [&raw_out, &raw_err](std::string_view driver_device_id, const ipc::LogEvent& event) {
+    printLine(isErrorLog(event) ? raw_err : raw_out, formatLogLine(driver_device_id, event));
   };
-  host_options.onOpenProgress = [&raw_out](std::string_view plugin_id, const ipc::OpenProgress& progress) {
-    printLine(raw_out, describeOpenProgress(plugin_id, progress));
+  host_options.onOpenProgress = [&raw_out](std::string_view driver_device_id, const ipc::OpenProgress& progress) {
+    printLine(raw_out, describeOpenProgress(driver_device_id, progress));
   };
-  host_options.onFacetEvent = [&events](std::string_view, const ipc::FacetEvent& event) {
+  host_options.onFacetEvent = [&events, &firmware_events](std::string_view, const ipc::FacetEvent& event) {
     events.onFacetEvent(event);
+    firmware_events.onFacetEvent(event);
   };
-  host::PipePluginHost& plugin_host = plugins.emplace(std::move(host_options));
+  host::PipeDriverHost& driver_host = drivers.emplace(std::move(host_options));
 
   if (opts.action == Action::Listen || opts.action == Action::ListDevices) {
-    return listPlugins(plugin_host, opts, directory, decoder_directory, raw_out, raw_err);
+    return listDrivers(driver_host, opts, directory, decoder_directory, raw_out, raw_err);
   }
   if (opts.action == Action::WatchDevices) {
-    return watchDevices(plugin_host, opts, directory, raw_out, raw_err, interrupted,
+    return watchDevices(driver_host, opts, directory, raw_out, raw_err, interrupted,
                         environment.list_again_interval_ms_for_test.value_or(kWatchListAgainIntervalMs));
   }
   if (opts.action == Action::ListProperties) {
-    return listProperties(plugin_host, opts, directory, raw_out, raw_err);
+    return listProperties(driver_host, opts, directory, raw_out, raw_err);
   }
 
-  auto device = openDevice(plugin_host, opts.plugin, opts.device, directory);
+  auto device = openDevice(driver_host, opts.driver, opts.device, directory);
   if (!device) {
     err << "bitoscope_cli: " << device.error() << std::endl;
     return kExitFailed;
   }
-  const std::shared_ptr<host::PluginConnection> connection = plugin_host.connection(device->plugin_id);
-  const auto plugin_closed = [connection]() -> std::optional<std::string> {
+  const std::shared_ptr<host::PluginConnection> connection = driver_host.connection(device->driver_device_id);
+  const auto driver_closed = [connection]() -> std::optional<std::string> {
     return connection ? connection->closedReason() : std::optional<std::string>("driver is not open");
   };
 
@@ -361,7 +423,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     seams.abandon_requested = interrupted;
     seams.err = &err;
     seams.stderr_columns = environment.stderr_columns;
-    seams.plugin_closed = plugin_closed;
+    seams.driver_closed = driver_closed;
     seams.device_lost = [connection]() -> std::optional<std::string> {
       return connection ? connection->deviceLostReason() : std::nullopt;
     };
@@ -371,7 +433,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     }
     seams.ring_geometry_for_test = environment.ring_geometry_for_test;
 
-    const auto acquired = runAcquire(opts, *device, plugin_host, out, seams);
+    const auto acquired = runAcquire(opts, *device, driver_host, out, seams);
     if (!acquired.has_value()) {
       err << "bitoscope_cli: " << acquired.error() << std::endl;
       return kExitFailed;
@@ -411,6 +473,26 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
     return exitCodeFor(*acquired);
   }
 
+  if (opts.action == Action::FlashFirmware || opts.action == Action::StartProgram) {
+    FirmwareSeams firmware_seams;
+    firmware_seams.interrupted = interrupted;
+    firmware_seams.clear_interrupt = [&environment] {
+      if (environment.clear_interrupt) environment.clear_interrupt();
+    };
+    firmware_seams.driver_closed = driver_closed;
+    if (opts.action == Action::StartProgram) {
+      return runStartProgram(*device, driver_host, firmware_events, out, err, firmware_seams);
+    }
+    firmware_seams.reopen = [&]() -> std::expected<host::pipe::DriverDevice, std::string> {
+      driver_host.close(device->driver_device_id);
+      return openDevice(driver_host, opts.driver, opts.device, directory);
+    };
+    firmware_seams.capture_check = [&](const host::pipe::DriverDevice& reopened) {
+      return captureCheckAfterUpdate(reopened, driver_host, events, out, err, interrupted);
+    };
+    return runFlashFirmware(opts, *device, driver_host, firmware_events, out, err, firmware_seams);
+  }
+
   const auto hold = [&] {
     const auto deadline = opts.duration.count() > 0 ? std::chrono::steady_clock::now() + opts.duration
                                                     : std::chrono::steady_clock::time_point::max();
@@ -419,7 +501,7 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
         printLine(raw_out, "capture ended by itself: " + describeCaptureEnd(*ended));
         return;
       }
-      if (plugin_closed()) return;
+      if (driver_closed()) return;
       std::this_thread::sleep_for(50ms);
     }
   };
@@ -427,8 +509,8 @@ int runCli(std::span<const std::string_view> args, const CliEnvironment& environ
   capture_seams.create_ring = acquisition::createHostRing;
   capture_seams.new_capture_id = acquisition::randomCaptureId;
   capture_seams.ring_geometry_for_test = environment.ring_geometry_for_test;
-  capture_seams.plugin_closed = plugin_closed;
-  const auto result = runAction(opts, *device, plugin_host, out, hold, capture_seams);
+  capture_seams.driver_closed = driver_closed;
+  const auto result = runAction(opts, *device, driver_host, out, hold, capture_seams);
   if (!result.has_value()) {
     err << "bitoscope_cli: " << result.error() << std::endl;
     return kExitFailed;

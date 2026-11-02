@@ -512,7 +512,8 @@ std::expected<std::optional<std::filesystem::path>, std::string> LinuxPlatformSe
                                           .fileTypeName = dialog.fileTypeName,
                                           .allFilesName = dialog.allFilesName,
                                           .folder = folder,
-                                          .fileName = dialog.fileName};
+                                          .fileName = dialog.fileName,
+                                          .extension = dialog.extension};
   const std::string parent = gui_linux::parentWindowIdentifier(
     glfwGetPlatform() == GLFW_PLATFORM_X11 ? std::optional<std::uint64_t>(x11WindowId(window_)) : std::nullopt);
   std::vector<std::string> notes;

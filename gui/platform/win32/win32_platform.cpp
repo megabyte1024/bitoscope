@@ -391,12 +391,14 @@ std::expected<std::optional<std::filesystem::path>, std::string> showFileDialog(
   if (FAILED(hr)) {
     return std::unexpected(hresultText("Creating file dialog", hr));
   }
-  const std::wstring typeName = toWide(dialog.fileTypeName) + L" (*.h5)";
+  const std::wstring extension = toWide(dialog.extension);
+  const std::wstring pattern = L"*." + extension;
+  const std::wstring typeName = toWide(dialog.fileTypeName) + L" (" + pattern + L")";
   const std::wstring allName = toWide(dialog.allFilesName.empty() ? std::string("*.*") : dialog.allFilesName);
-  const COMDLG_FILTERSPEC types[] = {{typeName.c_str(), L"*.h5"}, {allName.c_str(), L"*.*"}};
+  const COMDLG_FILTERSPEC types[] = {{typeName.c_str(), pattern.c_str()}, {allName.c_str(), L"*.*"}};
   fileDialog->SetFileTypes(save ? 1u : 2u, types);
   fileDialog->SetFileTypeIndex(1);
-  fileDialog->SetDefaultExtension(L"h5");
+  fileDialog->SetDefaultExtension(extension.c_str());
   const std::wstring title = toWide(dialog.title);
   fileDialog->SetTitle(title.c_str());
   FILEOPENDIALOGOPTIONS options = 0;

@@ -69,6 +69,7 @@ class PlatformServices {
     std::string allFilesName;
     std::filesystem::path folder;
     std::string fileName;
+    std::string extension = "h5";
   };
 
   // WHY: Modal dialog: call between frames, never inside one; the Linux layer draws drawFrame() frames while it waits.

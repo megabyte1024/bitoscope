@@ -17,9 +17,9 @@ namespace bitoscope::gui_devices {
 
 std::string shownDriverName(const DeviceCatalog& catalog, std::string_view driver);
 
-std::string deviceLabel(std::string_view driver, const bitoscope::ipc::DeviceInfo& device);
+std::string deviceLabel(std::string_view shownDriver, std::string_view name, std::string_view id);
 
-std::string deviceListLabel(const bitoscope::ipc::DeviceInfo& device);
+std::string deviceLabel(std::string_view shownDriver, const bitoscope::ipc::DeviceInfo& device);
 
 std::optional<std::string> openedDeviceLabel(const DeviceRouter& router,
                                              const bitoscope::gui_session::DeviceIdentity& identity);

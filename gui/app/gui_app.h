@@ -30,7 +30,9 @@
 #include <decoder.h>
 #include <decoder_config.h>
 #include <decoder_lane_model.h>
+#include <driver_device.h>
 #include <find_matches.h>
+#include <firmware_update_model.h>
 #include <lane_picture_cache.h>
 #include <decoder_registry.h>
 #include <decoder_runner.h>
@@ -63,14 +65,17 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <future>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "assets.h"
@@ -393,6 +398,12 @@ class GuiApp {
                            const std::vector<std::uint32_t>& connected, const SessionWaveform* shown,
                            const std::vector<std::uint32_t>& entryChannel = {});
   void drawNewSessionWizard();
+  void openFirmwareWindow();
+  void drawFirmwareWindow();
+  bool updateFirmwareWindow();
+  void closeFirmwareWindow();
+  void beginFirmwareHold();
+  void endFirmwareHold();
   bool drawWizardDevicePage(Wizard& wizard);
   void drawLog();
   void drawAbout();
@@ -510,6 +521,34 @@ class GuiApp {
 
   std::optional<Wizard> wizard_;
   bool wizardToOpen_ = false;
+
+  struct FirmwareOpening {
+    std::mutex mutex;
+    std::optional<std::expected<host::pipe::DriverDevice, std::string>> result;
+  };
+  struct FirmwareWindow {
+    enum class Page { ChooseDevice, Opening, Update };
+    Page page = Page::ChooseDevice;
+    std::size_t pickedIndex = 0;
+    std::string driver;
+    std::string deviceId;
+    std::string deviceName;
+    std::string driverDeviceId;
+    bool ownedConnection = false;
+    bool held = false;
+    bool flaggedUpdating = false;
+    bool browse = false;
+    bool runPage = false;
+    std::string error;
+    std::array<char, 1024> path{};
+    std::shared_ptr<FirmwareOpening> opening;
+    std::jthread opener;
+    std::unique_ptr<gui_firmware::FirmwareUpdateModel> model;
+    gui_firmware::Stage seenStage = gui_firmware::Stage::Idle;
+  };
+  gui_firmware::FirmwareEventBoard firmwareEvents_;
+  std::optional<FirmwareWindow> firmwareWindow_;
+  bool firmwareToOpen_ = false;
   int logMinimumLevel_ = 1;
   bool logAutoScroll_ = true;
   bool logJustShown_ = false;

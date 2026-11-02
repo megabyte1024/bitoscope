@@ -31,6 +31,7 @@ struct CliEnvironment {
   std::ostream* err = nullptr;
   std::filesystem::path executable;
   std::function<bool()> interrupted;
+  std::function<void()> clear_interrupt;
   std::function<std::optional<uint32_t>()> stderr_columns;
 
   bitoscope::capture::CaptureWriter* writer_for_test = nullptr;

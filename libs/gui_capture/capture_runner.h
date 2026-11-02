@@ -52,10 +52,10 @@ using AcquireSessionFn = std::function<std::expected<bitoscope::acquisition::Ses
 
 struct CaptureRunSetup {
   uint64_t run = 0;
-  bitoscope::host::pipe::PluginDevice device;
+  bitoscope::host::pipe::DriverDevice device;
   bitoscope::host::FacetTransport* transport = nullptr;
   CaptureRequest request;
-  std::function<std::optional<std::string>()> pluginClosed;
+  std::function<std::optional<std::string>()> driverClosed;
   std::function<std::optional<std::string>()> deviceLost;
   std::function<std::optional<bitoscope::ipc::la::CaptureEnded>(uint64_t captureId)> captureEnded;
   bitoscope::capture::MemoryProbe* probe = nullptr;

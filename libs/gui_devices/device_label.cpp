@@ -14,12 +14,12 @@ std::string shownDriverName(const DeviceCatalog& catalog, std::string_view drive
   return entry != nullptr ? entry->shownName() : std::string(driver);
 }
 
-std::string deviceLabel(std::string_view driver, const bitoscope::ipc::DeviceInfo& device) {
-  return std::format("{} ({}/{})", device.name.empty() ? device.id : device.name, driver, device.id);
+std::string deviceLabel(std::string_view shownDriver, std::string_view name, std::string_view id) {
+  return std::format("{} ({}/{})", name.empty() ? id : name, shownDriver, id);
 }
 
-std::string deviceListLabel(const bitoscope::ipc::DeviceInfo& device) {
-  return device.name.empty() ? device.id : std::format("{} ({})", device.name, device.id);
+std::string deviceLabel(std::string_view shownDriver, const bitoscope::ipc::DeviceInfo& device) {
+  return deviceLabel(shownDriver, device.name, device.id);
 }
 
 namespace {
@@ -54,13 +54,14 @@ std::optional<std::string> openedDeviceLabel(const DeviceRouter& router,
 
 std::string pickerDeviceLabel(const DeviceRouter& router, std::string_view driver,
                               const bitoscope::ipc::DeviceInfo& listed) {
+  const std::string shownDriver = shownDriverName(router.catalog(), driver);
   if (router.isOpen(driver, listed.id)) {
     const bitoscope::ipc::DeviceInfo* opened = router.openedDevice(driver, listed.id);
     if (opened != nullptr && !opened->name.empty()) {
-      return deviceListLabel(*opened);
+      return deviceLabel(shownDriver, *opened);
     }
   }
-  return deviceListLabel(listed);
+  return deviceLabel(shownDriver, listed);
 }
 
 }

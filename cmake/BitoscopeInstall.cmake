@@ -17,10 +17,10 @@ bitoscope_install_license("third_party/lz4/lib/LICENSE" "lz4-LICENSE.txt")
 bitoscope_install_license("third_party/luajit/COPYRIGHT" "luajit-LICENSE.txt")
 bitoscope_install_license("third_party/nlohmann_json/LICENSE.MIT" "nlohmann_json-LICENSE.txt")
 
-get_property(_bitoscope_install_plugins GLOBAL PROPERTY BITOSCOPE_PLUGIN_TARGETS)
-if(_bitoscope_install_plugins)
-  # WHY: Install whole plugin output directory: it is exactly the set GUI copies, plus vcpkg's libusb DLL.
-  install(DIRECTORY "${BITOSCOPE_PLUGIN_OUTPUT_DIR}/" DESTINATION drivers USE_SOURCE_PERMISSIONS)
+get_property(_bitoscope_install_drivers GLOBAL PROPERTY BITOSCOPE_DRIVER_TARGETS)
+if(_bitoscope_install_drivers)
+  # WHY: Install whole driver output directory: it is exactly the set GUI copies, plus vcpkg's libusb DLL.
+  install(DIRECTORY "${BITOSCOPE_DRIVER_OUTPUT_DIR}/" DESTINATION drivers USE_SOURCE_PERMISSIONS)
 endif()
 
 get_property(_bitoscope_install_decoders GLOBAL PROPERTY BITOSCOPE_DECODER_PLUGIN_TARGETS)

@@ -34,7 +34,7 @@ struct ChunkSummary {
   uint64_t total_missing_samples = 0;
 };
 
-std::string formatChunkSummary(std::string_view plugin_id, const ChunkSummary& summary);
+std::string formatChunkSummary(std::string_view driver_device_id, const ChunkSummary& summary);
 
 inline void ChunkGapTracker::expectFrom(uint64_t first_sample_index) {
   have_expected_ = true;
@@ -56,11 +56,11 @@ inline uint64_t ChunkGapTracker::observe(uint64_t first_sample_index, uint64_t n
   return missing;
 }
 
-inline std::string formatChunkSummary(std::string_view plugin_id, const ChunkSummary& summary) {
+inline std::string formatChunkSummary(std::string_view driver_device_id, const ChunkSummary& summary) {
   const std::string rate = summary.sample_rate_milli_hz % 1000 == 0
                                ? std::to_string(summary.sample_rate_milli_hz / 1000) + " Hz"
                                : std::to_string(summary.sample_rate_milli_hz) + " mHz";
-  std::string line = "[" + std::string(plugin_id) + "] la.acquisition: " +
+  std::string line = "[" + std::string(driver_device_id) + "] la.acquisition: " +
                      std::to_string(summary.chunks) + " chunk(s), " +
                      std::to_string(summary.samples) + " samples @ " + rate + " (last index " +
                      std::to_string(summary.last_first_sample_index) + ")";

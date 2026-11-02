@@ -19,7 +19,7 @@ using bitoscope::plugin::Layout;
 using bitoscope::plugin::PropertyNode;
 using bitoscope::plugin::Sink;
 
-namespace demo_plugin {
+namespace demo_driver {
 
 namespace {
 

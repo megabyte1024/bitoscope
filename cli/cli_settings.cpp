@@ -5,6 +5,7 @@
 #include "cli_settings.h"
 
 #include <bit>
+#include <format>
 #include <ostream>
 #include <variant>
 
@@ -15,7 +16,7 @@ namespace bitoscope::cli {
 
 namespace {
 
-const std::vector<ipc::props::PropertyNode>& analyzerTree(const host::pipe::PluginDevice& session) {
+const std::vector<ipc::props::PropertyNode>& analyzerTree(const host::pipe::DriverDevice& session) {
   static const std::vector<ipc::props::PropertyNode> kNone;
   for (const ipc::FacetInfo& facet : session.device.facets) {
     if (facet.name == ipc::la::kFacetName) return facet.properties;
@@ -33,9 +34,9 @@ std::string ceilingRateText(uint64_t milli_hz) {
 }
 
 std::expected<std::vector<ipc::props::PropertyValue>, std::string> readAnalyzerSettings(
-    const std::map<std::string, std::string>& settings, const host::pipe::PluginDevice& session, std::ostream* notes) {
+    const std::map<std::string, std::string>& settings, const host::pipe::DriverDevice& session, std::ostream* notes) {
   std::map<std::string, std::string> current = settings;
-  if (session.plugin_id.starts_with("demo/") && !current.contains("layout")) {
+  if (session.driver_device_id.starts_with("demo/") && !current.contains("layout")) {
     if (auto old = current.extract("encoding"); !old.empty()) {
       current.emplace("layout", std::move(old.mapped()));
       if (notes != nullptr) *notes << "bitoscope_cli: setting 'encoding' is now named 'layout'; old name still works\n";
@@ -43,14 +44,14 @@ std::expected<std::vector<ipc::props::PropertyValue>, std::string> readAnalyzerS
   }
   auto values = device_properties::readSettings(analyzerTree(session), current);
   if (!values) {
-    return std::unexpected("settings for '" + session.plugin_id + "' were refused - nothing was started: " +
+    return std::unexpected("settings for '" + session.driver_device_id + "' were refused - nothing was started: " +
                            values.error());
   }
   return std::move(*values);
 }
 
 std::string describeAnalyzerSettings(const std::vector<ipc::props::PropertyValue>& values,
-                                     const host::pipe::PluginDevice& session) {
+                                     const host::pipe::DriverDevice& session) {
   const auto& tree = analyzerTree(session);
   std::string line;
   for (const ipc::props::PropertyValue& value : values) {
@@ -70,8 +71,8 @@ std::expected<void, std::string> checkRateCeiling(uint64_t sample_rate_milli_hz,
   const auto selected = static_cast<size_t>(std::popcount(channel_mask));
   if (selected < 1 || selected > ceilings.size()) return {};
   if (sample_rate_milli_hz > ceilings[selected - 1]) {
-    return std::unexpected(std::to_string(selected) + " channels: at most " + ceilingRateText(ceilings[selected - 1]) +
-                           "; " + ceilingRateText(sample_rate_milli_hz) + " was asked for");
+    return std::unexpected(std::format("{} channel{}: at most {}; {} was asked for", selected, selected == 1 ? "" : "s",
+                                       ceilingRateText(ceilings[selected - 1]), ceilingRateText(sample_rate_milli_hz)));
   }
   return {};
 }

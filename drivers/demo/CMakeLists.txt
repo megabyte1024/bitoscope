@@ -23,6 +23,6 @@ bitoscope_enable_warnings(bitoscope_demo_analyzer)
 
 add_executable(demo main.cpp)
 target_link_libraries(demo PRIVATE bitoscope_demo_analyzer)
-bitoscope_plugin_executable(demo)
+bitoscope_driver_executable(demo)
 target_compile_features(demo PRIVATE cxx_std_23)
 bitoscope_enable_warnings(demo)

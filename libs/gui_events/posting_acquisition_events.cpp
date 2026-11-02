@@ -23,17 +23,17 @@ void PostingAcquisitionEvents::warning(uint32_t device,
 }
 
 void PostingAcquisitionEvents::propertiesSet(
-    uint32_t device, std::string_view pluginId,
+    uint32_t device, std::string_view driverDeviceId,
     const std::vector<bitoscope::ipc::props::PropertyValue>& values) {
-  std::string id(pluginId);
+  std::string id(driverDeviceId);
   queue_.post([run = run_, device, id, values](const GuiEventHandlers& handlers) {
     if (handlers.onPropertiesSet) handlers.onPropertiesSet(run, device, id, values);
   });
 }
 
-void PostingAcquisitionEvents::started(uint32_t device, std::string_view pluginId,
+void PostingAcquisitionEvents::started(uint32_t device, std::string_view driverDeviceId,
                                         uint64_t captureId) {
-  std::string id(pluginId);
+  std::string id(driverDeviceId);
   queue_.post([run = run_, device, id, captureId](const GuiEventHandlers& handlers) {
     if (handlers.onStarted) handlers.onStarted(run, device, id, captureId);
   });

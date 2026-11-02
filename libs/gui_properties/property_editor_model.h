@@ -105,6 +105,7 @@ class DevicePropertiesModel {
   explicit DevicePropertiesModel(const ipc::DeviceInfo& device);
 
   const std::vector<std::string>& facetNames() const { return order_; }
+  std::vector<std::string> facetNamesWithProperties() const;
 
   FacetPropertiesModel* facet(std::string_view name);
   const FacetPropertiesModel* facet(std::string_view name) const;

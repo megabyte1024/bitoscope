@@ -21,9 +21,9 @@ class PostingAcquisitionEvents final : public bitoscope::acquisition::Acquisitio
   void planned(uint32_t device, const bitoscope::capture::CapturePlan& plan,
                const std::optional<bitoscope::trigger::TriggerSpec>& trigger) override;
   void warning(uint32_t device, const bitoscope::acquisition::AcquireWarning& warn) override;
-  void propertiesSet(uint32_t device, std::string_view pluginId,
+  void propertiesSet(uint32_t device, std::string_view driverDeviceId,
                       const std::vector<bitoscope::ipc::props::PropertyValue>& values) override;
-  void started(uint32_t device, std::string_view pluginId, uint64_t captureId) override;
+  void started(uint32_t device, std::string_view driverDeviceId, uint64_t captureId) override;
   bool wantsProgress() const override;
   void progress(uint32_t device, uint64_t nowMs,
                 const bitoscope::acquisition::Progress& snapshot) override;

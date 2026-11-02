@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include "cli_plugins.h"
+#include "cli_drivers.h"
 #include "cli_run.h"
 #include "console_code_page.h"
 #include "display_text_file.h"
@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
       std::cerr << "bitoscope: " << line << "\n";
     }
     environment.interrupted = [] { return bitoscope::cli::ShutdownSignal::requested(); };
+    environment.clear_interrupt = [] { bitoscope::cli::ShutdownSignal::reset(); };
     environment.stderr_columns = bitoscope::cli::stderrTerminalColumns;
     return bitoscope::cli::runCli(args, environment);
   });

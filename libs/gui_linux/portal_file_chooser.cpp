@@ -13,10 +13,6 @@ namespace bitoscope::gui_linux {
 namespace {
 
 constexpr std::string_view kSessionExtension = ".h5";
-constexpr std::string_view kSessionGlob = "*.h5";
-// WHY: Listed after kSessionGlob so a file named in capitals is listed too; two plain globs rather than "*.[hH]5"
-// because a backend that appends the first glob's extension must still see "*.h5" first and plain.
-constexpr std::string_view kSessionGlobCapitals = "*.H5";
 constexpr std::string_view kAllFilesGlob = "*";
 constexpr std::string_view kRequestPathPrefix = "/org/freedesktop/portal/desktop/request/";
 
@@ -92,9 +88,15 @@ std::size_t utf8SequenceLength(std::string_view text) {
   return 0;
 }
 
-FileFilter sessionFilter(std::string_view fileTypeName) {
-  return FileFilter{std::format("{} ({})", dbusText(fileTypeName), kSessionGlob),
-                    {FilterPattern{0, std::string(kSessionGlob)}, FilterPattern{0, std::string(kSessionGlobCapitals)}}};
+FileFilter typeFilter(std::string_view fileTypeName, std::string_view extension) {
+  const std::string glob = std::format("*.{}", extension);
+  std::string capitals = glob;
+  for (char& c : capitals) {
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+  }
+  // WHY: Plain glob first, no "*.[hH]5": a backend appends the first glob's extension to a typed name.
+  return FileFilter{std::format("{} ({})", dbusText(fileTypeName), glob),
+                    {FilterPattern{0, glob}, FilterPattern{0, capitals}}};
 }
 
 std::string unusableUri(std::string_view uri, std::string_view why) {
@@ -192,7 +194,7 @@ FileChooserRequest fileChooserRequest(FileChooserKind kind, const FileChooserTex
   request.method = kind == FileChooserKind::Save ? "SaveFile" : "OpenFile";
   request.title = dbusText(texts.title);
   request.handleToken = std::string(handleToken);
-  request.currentFilter = sessionFilter(texts.fileTypeName);
+  request.currentFilter = typeFilter(texts.fileTypeName, texts.extension);
   request.filters.push_back(request.currentFilter);
   if (kind == FileChooserKind::Open) {
     request.filters.push_back(

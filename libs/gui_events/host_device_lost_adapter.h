@@ -12,13 +12,13 @@
 
 namespace bitoscope::gui_events {
 
-std::function<void(std::string_view pluginId, std::string_view reason)> makePostingHostDeviceLost(
+std::function<void(std::string_view driverDeviceId, std::string_view reason)> makePostingHostDeviceLost(
     GuiEventQueue& queue);
 
-std::function<void(std::string_view pluginId, std::string_view reason)> makePostingPluginClosed(
+std::function<void(std::string_view driverDeviceId, std::string_view reason)> makePostingDriverClosed(
     GuiEventQueue& queue);
 
-std::function<void(std::string_view pluginId, const bitoscope::ipc::OpenProgress& progress)> makePostingOpenProgress(
+std::function<void(std::string_view driverDeviceId, const bitoscope::ipc::OpenProgress& progress)> makePostingOpenProgress(
     GuiEventQueue& queue);
 
 }

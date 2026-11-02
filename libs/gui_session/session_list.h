@@ -41,6 +41,7 @@ struct Session {
   std::string lostReason{};
   DeviceUnavailable unavailable = DeviceUnavailable::None;
   std::string openedFrom{};
+  bool updatingFirmware = false;
   std::string savedFileTitle{};
 
   bool waitsForDevice() const;
@@ -56,6 +57,7 @@ enum class DeviceReasonKind {
   NoDevice,
   Connecting,
   OpenedFromFile,
+  Updating,
 };
 
 struct DeviceDisabledReason {
@@ -116,6 +118,7 @@ class SessionList {
                          std::string_view reason);
 
   void deviceConnecting(std::string_view driver, std::string_view deviceId);
+  void setDeviceUpdating(std::string_view driver, std::string_view deviceId, bool updating);
 
   void deviceReappeared(const DeviceIdentity& identity);
 

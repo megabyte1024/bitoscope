@@ -8,6 +8,7 @@ add_library(bitoscope_log STATIC
     logger.cpp
     text_escape.cpp
     log_view.cpp
+    plugin_stderr_line.cpp
 )
 
 target_include_directories(bitoscope_log PUBLIC

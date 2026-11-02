@@ -8,14 +8,14 @@
 
 namespace bitoscope::gui_devices {
 
-PipeDeviceHost::PipeDeviceHost(bitoscope::host::PipePluginHostOptions options)
-    : directory_(options.pluginDirectory), host_(std::move(options)) {}
+PipeDeviceHost::PipeDeviceHost(bitoscope::host::PipeDriverHostOptions options)
+    : directory_(options.driverDirectory), host_(std::move(options)) {}
 
 PipeDeviceHost::~PipeDeviceHost() {
   stopWatching();
 }
 
-std::filesystem::path PipeDeviceHost::pluginDirectory() const {
+std::filesystem::path PipeDeviceHost::driverDirectory() const {
   return directory_;
 }
 

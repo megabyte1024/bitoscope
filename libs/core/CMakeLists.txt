@@ -2,7 +2,7 @@
 
 add_library(bitoscope_plugin_host STATIC
     device_watcher.cpp
-    pipe_plugin_host.cpp
+    pipe_driver_host.cpp
     plugin_connection.cpp
     plugin_process.cpp
 )
@@ -23,6 +23,7 @@ bitoscope_enable_warnings(bitoscope_plugin_host)
 add_library(bitoscope_pipe_clients STATIC
     la_pipe_client.cpp
     siggen_pipe_client.cpp
+    firmware_update_pipe_client.cpp
 )
 
 target_include_directories(bitoscope_pipe_clients PUBLIC

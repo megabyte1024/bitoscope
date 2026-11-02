@@ -74,13 +74,13 @@ gs::DeviceIdentity identityOf(std::string_view driver, const bitoscope::ipc::Dev
       .driver = std::string(driver), .id = device.id, .serialNumber = device.serialNumber};
 }
 
-std::optional<std::pair<std::string, std::string>> splitPluginId(std::string_view pluginId) {
-  const std::size_t slash = pluginId.find('/');
-  if (slash == std::string_view::npos || slash == 0 || slash + 1 == pluginId.size()) {
+std::optional<std::pair<std::string, std::string>> splitDriverDeviceId(std::string_view driverDeviceId) {
+  const std::size_t slash = driverDeviceId.find('/');
+  if (slash == std::string_view::npos || slash == 0 || slash + 1 == driverDeviceId.size()) {
     return std::nullopt;
   }
-  return std::pair<std::string, std::string>{std::string(pluginId.substr(0, slash)),
-                                             std::string(pluginId.substr(slash + 1))};
+  return std::pair<std::string, std::string>{std::string(driverDeviceId.substr(0, slash)),
+                                             std::string(driverDeviceId.substr(slash + 1))};
 }
 
 DeviceRouter::DeviceRouter(gs::SessionList& sessions) : sessions_(sessions) {}
@@ -90,7 +90,7 @@ void DeviceRouter::requestOpen(const Key& key, bool replug, RouterOutput& out) {
     replug_.insert(key);
   }
   if (pending_.insert(key).second) {
-    if (plugins_.contains(key)) {
+    if (drivers_.contains(key)) {
       closing_.insert(key);
     }
     out.open.push_back(DeviceRequest{key.first, key.second});
@@ -99,7 +99,7 @@ void DeviceRouter::requestOpen(const Key& key, bool replug, RouterOutput& out) {
 }
 
 bool DeviceRouter::heldHere(const Key& key) const {
-  return open_.contains(key) || pending_.contains(key) || plugins_.contains(key);
+  return open_.contains(key) || pending_.contains(key) || drivers_.contains(key);
 }
 
 bool DeviceRouter::watching(std::string_view driver) const {
@@ -286,7 +286,9 @@ RouterOutput DeviceRouter::deviceAppeared(std::string_view driver,
 
 void DeviceRouter::markLost(std::string_view driver, std::string_view deviceId,
                             std::string_view reason, RouterOutput& out) {
-  open_.erase(Key{std::string(driver), std::string(deviceId)});
+  const Key key{std::string(driver), std::string(deviceId)};
+  open_.erase(key);
+  held_.erase(key);
   sessions_.deviceLost(driver, deviceId, reason);
   out.log.push_back(std::format("{}/{} lost: {}", driver, deviceId, reason));
 }
@@ -295,17 +297,21 @@ RouterOutput DeviceRouter::deviceLost(std::string_view driver, std::string_view 
                                       std::string_view reason) {
   RouterOutput out;
   catalog_.deviceLost(driver, deviceId);
+  if (held_.contains(Key{std::string(driver), std::string(deviceId)})) {
+    out.log.push_back(std::format("{}/{} left while held open: {}", driver, deviceId, reason));
+    return out;
+  }
   markLost(driver, deviceId, reason, out);
   return out;
 }
 
-RouterOutput DeviceRouter::hostDeviceLost(std::string_view pluginId, std::string_view reason) {
+RouterOutput DeviceRouter::hostDeviceLost(std::string_view driverDeviceId, std::string_view reason) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     out.log.push_back(std::format("Driver that is not \"<driver>/<device>\" ({}) reported its "
                                   "device lost: {}",
-                                  pluginId, reason));
+                                  driverDeviceId, reason));
     return out;
   }
   markLost(split->first, split->second, reason, out);
@@ -341,10 +347,10 @@ RouterOutput DeviceRouter::deviceOpened(
   const bool replug = replug_.erase(key) > 0;
   closing_.erase(key);
   if (opened) {
-    plugins_.insert(key);
+    drivers_.insert(key);
     opened_[key] = *opened;
   } else {
-    plugins_.erase(key);
+    drivers_.erase(key);
   }
   const bitoscope::ipc::DeviceInfo* listed = catalog_.find(driver, deviceId);
   gs::DeviceIdentity identity =
@@ -393,17 +399,17 @@ RouterOutput DeviceRouter::deviceOpened(
   return out;
 }
 
-RouterOutput DeviceRouter::pluginClosed(std::string_view pluginId, std::string_view reason) {
+RouterOutput DeviceRouter::driverClosed(std::string_view driverDeviceId, std::string_view reason) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     return out;
   }
   const Key key{split->first, split->second};
-  if (!plugins_.contains(key)) {
+  if (!drivers_.contains(key)) {
     return out;
   }
-  plugins_.erase(key);
+  drivers_.erase(key);
   if (closing_.erase(key) > 0) {
     out.log.push_back(std::format("{}/{}: its driver was closed to open device afresh", key.first, key.second));
     return out;
@@ -433,9 +439,34 @@ RouterOutput DeviceRouter::retryWaiting(std::string_view driver) {
   return out;
 }
 
-RouterOutput DeviceRouter::progressReported(std::string_view pluginId, const bitoscope::ipc::OpenProgress& progress) {
+RouterOutput DeviceRouter::holdOpen(std::string_view driver, std::string_view deviceId) {
   RouterOutput out;
-  const auto split = splitPluginId(pluginId);
+  const Key key{std::string(driver), std::string(deviceId)};
+  if (!open_.contains(key)) {
+    out.log.push_back(std::format("{}/{} is not open, so it is not held", key.first, key.second));
+    return out;
+  }
+  held_.insert(key);
+  out.log.push_back(std::format("{}/{} held open while device restarts", key.first, key.second));
+  return out;
+}
+
+RouterOutput DeviceRouter::releaseHold(std::string_view driver, std::string_view deviceId) {
+  RouterOutput out;
+  const Key key{std::string(driver), std::string(deviceId)};
+  if (held_.erase(key) == 0) {
+    return out;
+  }
+  open_.erase(key);
+  sessions_.deviceConnecting(key.first, key.second);
+  out.log.push_back(std::format("{}/{} released: opening it afresh", key.first, key.second));
+  requestOpen(key, true, out);
+  return out;
+}
+
+RouterOutput DeviceRouter::progressReported(std::string_view driverDeviceId, const bitoscope::ipc::OpenProgress& progress) {
+  RouterOutput out;
+  const auto split = splitDriverDeviceId(driverDeviceId);
   if (!split) {
     return out;
   }
@@ -466,6 +497,28 @@ const bitoscope::ipc::OpenProgress* DeviceRouter::openingProgressFor(const gs::D
 bool DeviceRouter::pickable(std::string_view driver, const bitoscope::ipc::DeviceInfo& listed) const {
   return listed.unavailable == bitoscope::ipc::UnavailableReason::none ||
          heldHere(Key{std::string(driver), listed.id});
+}
+
+std::vector<DeviceRouter::FacetDevice> DeviceRouter::devicesOffering(std::string_view facetName) const {
+  std::vector<FacetDevice> out;
+  for (const DriverEntry& entry : catalog_.drivers()) {
+    for (const bitoscope::ipc::DeviceInfo& listed : entry.devices) {
+      const bitoscope::ipc::DeviceInfo* info = &listed;
+      if (listed.unavailable != bitoscope::ipc::UnavailableReason::none) {
+        if (!heldHere(Key{entry.name, listed.id})) {
+          continue;
+        }
+        if (const bitoscope::host::OpenedDevice* here = opened(entry.name, listed.id)) {
+          info = &here->device;
+        }
+      }
+      const bool offers = std::ranges::any_of(info->facets, [&](const bitoscope::ipc::FacetInfo& facet) { return facet.name == facetName; });
+      if (offers) {
+        out.push_back(FacetDevice{entry.name, listed.id, info->name.empty() ? listed.name : info->name});
+      }
+    }
+  }
+  return out;
 }
 
 std::vector<bitoscope::gui_wizard::WizardDriver> DeviceRouter::wizardDrivers() const {

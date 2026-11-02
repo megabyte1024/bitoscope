@@ -29,6 +29,8 @@ enum class Action {
   Stop,
   PwmStart,
   PwmStop,
+  FlashFirmware,
+  StartProgram,
   Acquire,
   ListDevices,
   WatchDevices,
@@ -55,9 +57,9 @@ PreTriggerRequest preTriggerRequest(const TriggerOptions& trigger);
 
 struct CliOptions {
   Action action = Action::Listen;
-  std::string plugin;
+  std::string driver;
   std::string device;
-  std::string plugin_dir;
+  std::string driver_dir;
   std::string check_driver;
   std::chrono::seconds wait{30};
 
@@ -90,6 +92,11 @@ struct CliOptions {
   uint32_t pack_workers = 0;
   uint32_t clearing_workers = 1;
   bool quiet = false;
+
+  std::string firmware_file;
+  std::optional<std::string> firmware_model;
+  bool confirm_unknown_file = false;
+  bool confirm_other_model = false;
 
   uint32_t port_mask = 0;
   uint64_t freq_hz = 0;

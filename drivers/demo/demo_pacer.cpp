@@ -17,7 +17,7 @@
 #include <windows.h>
 #endif
 
-namespace demo_plugin {
+namespace demo_driver {
 
 std::chrono::nanoseconds durationOf(uint64_t samples, uint64_t rate_hz) {
   const uint64_t whole = samples / rate_hz;
