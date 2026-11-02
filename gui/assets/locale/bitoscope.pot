@@ -425,7 +425,7 @@ msgid "Update firmware"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Step 1 of 3: Choose device"
+msgid "Step 1 of 3: Choose analyzer"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -433,31 +433,43 @@ msgid "Step 2 of 3: Choose firmware file"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Step 3 of 3: Update firmware"
-msgstr ""
-
-#: gui/app/firmware_panel.cpp gui/app/session_file_panel.cpp
-msgid "Opening {}..."
+msgid "Step 3 of 3: Install firmware"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "No device offers firmware update. Connect analyzer and wait until it is listed."
+msgid "Technical details: {}"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "capturing"
-msgstr ""
-
-#: gui/app/firmware_panel.cpp gui/app/session_file_panel.cpp
-msgid "Device: {}"
+msgid "Connecting to {}..."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Analyzer is waiting for firmware, so its model is unknown. Choose it below."
+msgid "Choose analyzer to update."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Model of analyzer:"
+msgid "No analyzer that bitoscope can update is connected. Connect FNIRSI DLA analyzer: it appears here after some seconds."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "capturing now: stop capture first"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer: {}"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer is in update mode: it waits for new firmware and cannot capture. In this mode it cannot report its model, so choose it below."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Not updating now? Press Leave update mode: analyzer restarts with firmware it already has."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Channels on your analyzer:"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -481,11 +493,19 @@ msgid "Check file"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Flash file that is none of known FNIRSI files"
+msgid "Choose FNIRSI firmware file (.bin), then press Check file."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Flash file made for other model (may damage analyzer)"
+msgid "This file is not DLA firmware file."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Install this file anyway"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Install it anyway, although it is made for other model (can damage analyzer)"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -493,47 +513,75 @@ msgid "Firmware file: {}"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Update takes about 5 minutes: do not unplug device meanwhile."
+msgid "Update could not start."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Sending {} image: {} of {} bytes"
+msgid "Update takes about 5 minutes. Do not unplug analyzer until it ends."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Finishing: analyzer restarts"
+msgid "Writing part 1 of 2 (control program)"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Preparing..."
+msgid "Writing part 2 of 2 (capture logic)"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Attempt {} of {}"
+msgid "Writing {}"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Writes sent again: {}"
+msgid "{} of {} bytes written"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Update finished. Analyzer restarted with its new firmware."
+msgid "Finishing: analyzer restarts with new firmware"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Update did not finish: {}"
+msgid "Getting analyzer ready..."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Analyzer cannot capture until update completes."
+msgid "Started again after problem: try {} of {}"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Stopping now leaves analyzer unable to capture until update is run again to its end."
+msgid "Transfers repeated: {} (analyzer did not accept them at first)"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Stopping inside FPGA image leaves analyzer unable to capture until update is run again to its end."
+msgid "Analyzer left update mode and runs its firmware again. To update it now, close this window and open Update firmware again."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Firmware installed. Analyzer restarted with new firmware."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update stopped."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer stopped responding. Unplug it, plug it in again, then open Update firmware again."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update did not succeed."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Analyzer cannot capture until firmware is installed completely. Run update again: this repairs it."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Part 2 is being written now. If you stop, analyzer cannot capture until you run update again to its end."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Stopping during part 1 is safe. Stopping during part 2 leaves analyzer unable to capture until you run update again to its end; this does not damage analyzer."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp gui/app/panels.cpp
@@ -549,7 +597,7 @@ msgid "Start update"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Start analyzer's program"
+msgid "Leave update mode"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -1296,6 +1344,10 @@ msgid "Saved"
 msgstr ""
 
 #: gui/app/session_file_panel.cpp
+msgid "Opening {}..."
+msgstr ""
+
+#: gui/app/session_file_panel.cpp
 msgid "{} could not be opened: {}"
 msgstr ""
 
@@ -1305,6 +1357,10 @@ msgstr ""
 
 #: gui/app/session_file_panel.cpp
 msgid "Opened from {}"
+msgstr ""
+
+#: gui/app/session_file_panel.cpp
+msgid "Device: {}"
 msgstr ""
 
 #: gui/app/session_file_panel.cpp

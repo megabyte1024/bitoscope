@@ -252,24 +252,36 @@ void GuiApp::drawFirmwareWindow() {
   };
 
   if (step == 1) {
-    ImGui::TextUnformatted(tr("Step 1 of 3: Choose device"));
+    ImGui::TextUnformatted(tr("Step 1 of 3: Choose analyzer"));
   } else if (step == 2) {
     ImGui::TextUnformatted(tr("Step 2 of 3: Choose firmware file"));
   } else {
-    ImGui::TextUnformatted(tr("Step 3 of 3: Update firmware"));
+    ImGui::TextUnformatted(tr("Step 3 of 3: Install firmware"));
   }
   ImGui::Separator();
 
   bool close = false;
   const float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+  const auto details = [](const std::string& text) {
+    if (text.empty()) {
+      return;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", trf("Technical details: {}", text).c_str());
+    ImGui::PopTextWrapPos();
+  };
   if (ImGui::BeginChild("page", ImVec2(0, -footer))) {
     if (step == 1) {
       if (opening) {
-        ImGui::TextUnformatted(trf("Opening {}...", window.deviceName).c_str());
+        ImGui::TextUnformatted(trf("Connecting to {}...", window.deviceName).c_str());
       } else {
+        ImGui::TextWrapped("%s", tr("Choose analyzer to update."));
+        ImGui::Spacing();
         if (candidates.empty()) {
-          ImGui::TextDisabled("%s",
-                              tr("No device offers firmware update. Connect analyzer and wait until it is listed."));
+          ImGui::PushTextWrapPos(0.0f);
+          ImGui::TextDisabled("%s", tr("No analyzer that bitoscope can update is connected. Connect FNIRSI DLA "
+                                       "analyzer: it appears here after some seconds."));
+          ImGui::PopTextWrapPos();
         }
         for (std::size_t i = 0; i < candidates.size(); ++i) {
           const Candidate& c = candidates[i];
@@ -285,7 +297,7 @@ void GuiApp::drawFirmwareWindow() {
           ImGui::EndDisabled();
           if (c.capturing) {
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", tr("capturing"));
+            ImGui::TextDisabled("%s", tr("capturing now: stop capture first"));
           }
           ImGui::PopID();
         }
@@ -295,14 +307,17 @@ void GuiApp::drawFirmwareWindow() {
       }
     } else if (step == 2) {
       gf::FirmwareUpdateModel& model = *window.model;
-      ImGui::TextUnformatted(trf("Device: {}", window.deviceName).c_str());
+      ImGui::TextUnformatted(trf("Analyzer: {}", window.deviceName).c_str());
       if (view.inBootloader) {
-        ImGui::TextWrapped("%s", tr("Analyzer is waiting for firmware, so its model is unknown. Choose it below."));
+        ImGui::TextWrapped("%s", tr("Analyzer is in update mode: it waits for new firmware and cannot capture. In "
+                                    "this mode it cannot report its model, so choose it below."));
+        ImGui::TextWrapped("%s", tr("Not updating now? Press Leave update mode: analyzer restarts with firmware it "
+                                    "already has."));
       }
       ImGui::Spacing();
       ImGui::BeginDisabled(checking);
       if (view.inBootloader) {
-        ImGui::TextUnformatted(tr("Model of analyzer:"));
+        ImGui::TextUnformatted(tr("Channels on your analyzer:"));
         ImGui::SameLine();
         if (ImGui::RadioButton(tr("16 channels"), view.chosenModel == "16")) {
           model.setChosenModel("16");
@@ -328,8 +343,13 @@ void GuiApp::drawFirmwareWindow() {
       if (!window.error.empty()) {
         errorText(window.error);
       }
-      if (view.stage == gf::Stage::Working || view.stage == gf::Stage::Ready) {
+      if (view.stage == gf::Stage::Idle && window.error.empty()) {
+        ImGui::TextWrapped("%s", tr("Choose FNIRSI firmware file (.bin), then press Check file."));
+      } else if (view.stage == gf::Stage::Working || view.stage == gf::Stage::Ready) {
         ImGui::TextWrapped("%s", view.message.c_str());
+      } else if (view.stage == gf::Stage::Refused && view.verdict == fw::Verdict::unreadable) {
+        errorText(tr("This file is not DLA firmware file."));
+        details(view.message);
       } else if (view.stage == gf::Stage::Refused) {
         errorText(view.message);
       }
@@ -338,29 +358,32 @@ void GuiApp::drawFirmwareWindow() {
       if ((view.stage == gf::Stage::Ready || view.stage == gf::Stage::Refused) && (riskUnknown || riskOther)) {
         if (riskUnknown) {
           bool confirmed = view.confirmUnknownFile;
-          if (ImGui::Checkbox(tr("Flash file that is none of known FNIRSI files"), &confirmed)) {
+          if (ImGui::Checkbox(tr("Install this file anyway"), &confirmed)) {
             model.setConfirmUnknownFile(confirmed);
           }
         }
         if (riskOther) {
           bool confirmed = view.confirmOtherModel;
-          if (ImGui::Checkbox(tr("Flash file made for other model (may damage analyzer)"), &confirmed)) {
+          if (ImGui::Checkbox(tr("Install it anyway, although it is made for other model (can damage analyzer)"), &confirmed)) {
             model.setConfirmOtherModel(confirmed);
           }
         }
       }
     } else {
-      ImGui::TextUnformatted(trf("Device: {}", window.deviceName).c_str());
-      ImGui::TextUnformatted(trf("Firmware file: {}", std::string(window.path.data())).c_str());
+      ImGui::TextUnformatted(trf("Analyzer: {}", window.deviceName).c_str());
+      if (!window.leavingUpdateMode) {
+        ImGui::TextUnformatted(trf("Firmware file: {}", std::string(window.path.data())).c_str());
+      }
       if (view.stage == gf::Stage::Ready) {
         ImGui::TextWrapped("%s", view.message.c_str());
       }
       if (view.stage == gf::Stage::Refused) {
-        errorText(view.message);
+        errorText(tr("Update could not start."));
+        details(view.message);
       }
-      if (view.stage != gf::Stage::Finished) {
+      if (view.stage != gf::Stage::Finished && !window.leavingUpdateMode) {
         ImGui::Spacing();
-        ImGui::TextWrapped("%s", tr("Update takes about 5 minutes: do not unplug device meanwhile."));
+        ImGui::TextWrapped("%s", tr("Update takes about 5 minutes. Do not unplug analyzer until it ends."));
       }
       if (running) {
         ImGui::Separator();
@@ -372,18 +395,28 @@ void GuiApp::drawFirmwareWindow() {
                                                         static_cast<double>(progress.bytesTotal));
           ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f));
           if (progress.phase == fw::Phase::sending) {
-            ImGui::TextUnformatted(trf("Sending {} image: {} of {} bytes", progress.imageName,
-                                       gui_format::withThousands(progress.bytesSent),
+            if (progress.imageName == "MCU") {
+              ImGui::TextUnformatted(tr("Writing part 1 of 2 (control program)"));
+            } else if (progress.imageName == "FPGA") {
+              ImGui::TextUnformatted(tr("Writing part 2 of 2 (capture logic)"));
+            } else {
+              ImGui::TextUnformatted(trf("Writing {}", progress.imageName).c_str());
+            }
+            ImGui::TextUnformatted(trf("{} of {} bytes written", gui_format::withThousands(progress.bytesSent),
                                        gui_format::withThousands(progress.bytesTotal))
                                      .c_str());
           } else if (progress.phase == fw::Phase::finishing) {
-            ImGui::TextUnformatted(tr("Finishing: analyzer restarts"));
+            ImGui::TextUnformatted(tr("Finishing: analyzer restarts with new firmware"));
           } else {
-            ImGui::TextUnformatted(tr("Preparing..."));
+            ImGui::TextUnformatted(tr("Getting analyzer ready..."));
           }
-          ImGui::TextUnformatted(trf("Attempt {} of {}", progress.attempt, progress.attempts).c_str());
+          if (progress.attempt > 1) {
+            ImGui::TextUnformatted(
+              trf("Started again after problem: try {} of {}", progress.attempt, progress.attempts).c_str());
+          }
           if (progress.resends != 0) {
-            ImGui::TextUnformatted(trf("Writes sent again: {}", progress.resends).c_str());
+            ImGui::TextUnformatted(
+              trf("Transfers repeated: {} (analyzer did not accept them at first)", progress.resends).c_str());
           }
         } else if (view.stage == gf::Stage::Running) {
           ImGui::TextUnformatted(view.message.c_str());
@@ -391,23 +424,42 @@ void GuiApp::drawFirmwareWindow() {
       }
       if (view.stage == gf::Stage::Finished && view.finished) {
         const fw::Finished& done = *view.finished;
-        if (done.outcome == fw::Outcome::done) {
-          ImGui::TextWrapped("%s", tr("Update finished. Analyzer restarted with its new firmware."));
-        } else {
-          errorText(trf("Update did not finish: {}", done.message));
+        switch (done.outcome) {
+          case fw::Outcome::done:
+            ImGui::TextWrapped("%s", window.leavingUpdateMode
+                                       ? tr("Analyzer left update mode and runs its firmware again. To update it "
+                                            "now, close this window and open Update firmware again.")
+                                       : tr("Firmware installed. Analyzer restarted with new firmware."));
+            break;
+          case fw::Outcome::cancelled:
+            errorText(tr("Update stopped."));
+            break;
+          case fw::Outcome::needsReplug:
+            errorText(tr("Analyzer stopped responding. Unplug it, plug it in again, then open Update firmware "
+                         "again."));
+            break;
+          case fw::Outcome::failed:
+            errorText(tr("Update did not succeed."));
+            break;
         }
         if (!done.canCapture) {
-          errorText(tr("Analyzer cannot capture until update completes."));
+          errorText(tr("Analyzer cannot capture until firmware is installed completely. Run update again: this "
+                       "repairs it."));
+        }
+        if (done.outcome != fw::Outcome::done) {
+          details(done.message);
         }
       }
       if (view.stage == gf::Stage::Running && view.cancelNeedsConfirmation) {
-        errorText(tr("Stopping now leaves analyzer unable to capture until update is run again to its end."));
+        errorText(tr("Part 2 is being written now. If you stop, analyzer cannot capture until you run update "
+                     "again to its end."));
       }
-      if (view.stage != gf::Stage::Running) {
+      if (view.stage != gf::Stage::Running && view.stage != gf::Stage::Finished && !window.leavingUpdateMode) {
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("%s", tr("Stopping inside FPGA image leaves analyzer unable to capture until update is "
-                                     "run again to its end."));
+        ImGui::TextDisabled("%s", tr("Stopping during part 1 is safe. Stopping during part 2 leaves analyzer unable "
+                                     "to capture until you run update again to its end; this does not damage "
+                                     "analyzer."));
         ImGui::PopTextWrapPos();
       }
     }
@@ -420,7 +472,7 @@ void GuiApp::drawFirmwareWindow() {
   const char* back = tr("< Back");
   const char* next = tr("Next >");
   const char* startUpdate = tr("Start update");
-  const char* startProgram = tr("Start analyzer's program");
+  const char* startProgram = tr("Leave update mode");
   const char* stopAnyway = tr("Stop anyway");
   const char* cancel = step == 3 && view.stage == gf::Stage::Running ? tr("Stop update")
                        : step == 3 && view.stage == gf::Stage::Finished ? tr("Close")
@@ -476,6 +528,7 @@ void GuiApp::drawFirmwareWindow() {
 
   ImGui::BeginDisabled(!(step == 3 && view.stage == gf::Stage::Ready));
   if (ImGui::Button(startUpdate)) {
+    window.leavingUpdateMode = false;
     window.model->start();
   }
   ImGui::EndDisabled();
@@ -484,6 +537,7 @@ void GuiApp::drawFirmwareWindow() {
   if (startingProgram) {
     ImGui::BeginDisabled(checking);
     if (ImGui::Button(startProgram)) {
+      window.leavingUpdateMode = true;
       window.model->startProgram();
     }
     ImGui::EndDisabled();

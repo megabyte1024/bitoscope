@@ -124,7 +124,7 @@ void FirmwareUpdateModel::chooseFile(std::string path) {
     if (view_.stage == Stage::Working || view_.stage == Stage::Running) return;
     view_.stage = Stage::Working;
     view_.file = path;
-    view_.message = "Reading and checking file";
+    view_.message = "Checking file...";
     view_.verdict.reset();
     view_.fileModel.clear();
     view_.progress.reset();
@@ -189,7 +189,7 @@ void FirmwareUpdateModel::recheck() {
     std::lock_guard lock(mutex_);
     if (!uploadId_ || (view_.stage != Stage::Ready && view_.stage != Stage::Refused)) return;
     view_.stage = Stage::Working;
-    view_.message = "Checking file";
+    view_.message = "Checking file...";
   }
   post([this] { checkNow(); });
 }
@@ -229,7 +229,7 @@ void FirmwareUpdateModel::start() {
     model = modelArgument();
     confirmed = {view_.confirmUnknownFile, view_.confirmOtherModel};
     view_.stage = Stage::Running;
-    view_.message = "Starting update";
+    view_.message = "Starting update...";
     view_.progress.reset();
     view_.finished.reset();
     view_.cancelNeedsConfirmation = false;
@@ -250,7 +250,7 @@ void FirmwareUpdateModel::startProgram() {
     std::lock_guard lock(mutex_);
     if (view_.stage == Stage::Working || view_.stage == Stage::Running) return;
     view_.stage = Stage::Running;
-    view_.message = "Starting analyzer's program";
+    view_.message = "Restarting analyzer...";
     view_.progress.reset();
     view_.finished.reset();
     view_.cancelNeedsConfirmation = false;
@@ -280,11 +280,11 @@ void FirmwareUpdateModel::cancel(bool confirm_cannot_capture) {
     } else if (*answer == fw::CancelAnswer::accepted) {
       view_.cancelRequested = true;
       view_.cancelNeedsConfirmation = false;
-      view_.message = "Stopping update at next safe point";
+      view_.message = "Stopping update...";
     } else if (*answer == fw::CancelAnswer::needsConfirmation) {
       view_.cancelNeedsConfirmation = true;
     } else {
-      view_.message = "Update is finishing: too late to stop it";
+      view_.message = "Update is almost done and can no longer be stopped.";
     }
   });
 }

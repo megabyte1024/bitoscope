@@ -539,6 +539,7 @@ class GuiApp {
     bool flaggedUpdating = false;
     bool browse = false;
     bool runPage = false;
+    bool leavingUpdateMode = false;
     std::string error;
     std::array<char, 1024> path{};
     std::shared_ptr<FirmwareOpening> opening;

@@ -60,11 +60,11 @@ std::expected<std::vector<uint8_t>, std::string> readFile(const std::string& pat
 std::string hintFor(fw::Verdict verdict) {
   switch (verdict) {
     case fw::Verdict::modelUnknown:
-      return "name model of analyzer with --model 16 or --model 32";
+      return "Name it with --model 16 or --model 32.";
     case fw::Verdict::unknownFile:
-      return "to flash it anyway, add --confirm-unknown-file";
+      return "To install it anyway, add --confirm-unknown-file.";
     case fw::Verdict::otherModel:
-      return "to flash it anyway, add --confirm-other-model (analyzer may be damaged)";
+      return "To install it anyway, add --confirm-other-model.";
     case fw::Verdict::fits:
     case fw::Verdict::unreadable:
       break;
@@ -218,7 +218,7 @@ int runFlashFirmware(const CliOptions& opts, const host::pipe::DriverDevice& ses
   if (!checked) return failed(err, checked.error());
   if (checked->verdict != fw::Verdict::fits) {
     const std::string hint = hintFor(checked->verdict);
-    return failed(err, checked->message + (hint.empty() ? std::string() : "; " + hint));
+    return failed(err, checked->message + (hint.empty() ? std::string() : " " + hint));
   }
   out << checked->message << std::endl;
 
