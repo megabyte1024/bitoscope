@@ -143,6 +143,12 @@ bool GuiApp::updateFirmwareWindow() {
       if (view.stage == gf::Stage::Refused && !view.message.empty()) {
         logger_.logf(log::LogLevel::warning, "firmware", "Firmware file or update refused: {}", view.message);
       }
+      if (view.stage == gf::Stage::Finished && view.finished) {
+        const int resends = view.progress ? view.progress->resends : 0;
+        logger_.logf(view.finished->outcome == fw::Outcome::done ? log::LogLevel::info : log::LogLevel::warning,
+                     "firmware", "Firmware update ended: {}; {} transfers repeated", view.finished->message,
+                     resends);
+      }
       if (view.stage == gf::Stage::Running) {
         beginFirmwareHold();
       } else if (window.flaggedUpdating) {
@@ -151,10 +157,9 @@ bool GuiApp::updateFirmwareWindow() {
       window.seenStage = view.stage;
       changed = true;
     }
-    if (view.stage == gf::Stage::Finished && view.finished) {
-      const int resends = view.progress ? view.progress->resends : 0;
-      logger_.logf(view.finished->outcome == fw::Outcome::done ? log::LogLevel::info : log::LogLevel::warning,
-                   "firmware", "Firmware update ended: {}; {} transfers repeated", view.finished->message, resends);
+    const bool installed =
+      view.finished && view.finished->outcome == fw::Outcome::done && !window.leavingUpdateMode;
+    if (view.stage == gf::Stage::Finished && view.finished && !installed) {
       window.lastResult = FirmwareWindow::LastResult{*view.finished, window.leavingUpdateMode};
       window.leavingUpdateMode = false;
       window.runPage = false;
@@ -454,6 +459,10 @@ void GuiApp::drawFirmwareWindow() {
           ImGui::TextUnformatted(view.message.c_str());
         }
       }
+      if (view.stage == gf::Stage::Finished) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", tr("Firmware installed. Analyzer restarted with new firmware."));
+      }
       if (view.stage == gf::Stage::Running && view.cancelNeedsConfirmation) {
         errorText(tr("If you stop now, analyzer cannot capture until you run update again to its end."));
       }
@@ -477,7 +486,8 @@ void GuiApp::drawFirmwareWindow() {
   const char* startProgram = tr("Leave update mode");
   const char* stopAnyway = tr("Stop anyway");
   const char* cancel = step == 3 && view.stage == gf::Stage::Running ? tr("Stop update")
-                       : step == 1 && window.lastResult                 ? tr("Close")
+                       : (step == 1 && window.lastResult) ||
+                           (step == 3 && view.stage == gf::Stage::Finished) ? tr("Close")
                                                                         : tr("Cancel");
   std::vector<const char*> labels{back, next, startUpdate, cancel};
   if (startingProgram) {

@@ -33,7 +33,7 @@ namespace bitoscope::lua_gateway {
 
 namespace {
 
-constexpr const char* kGatewayVersion = "0.2.0";
+constexpr const char* kGatewayVersion = "0.3.0";
 
 struct Abbreviation {
   std::string upper;
