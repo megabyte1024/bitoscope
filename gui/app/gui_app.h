@@ -540,6 +540,11 @@ class GuiApp {
     bool browse = false;
     bool runPage = false;
     bool leavingUpdateMode = false;
+    struct LastResult {
+      ipc::firmware::Finished finished;
+      bool leftUpdateMode = false;
+    };
+    std::optional<LastResult> lastResult;
     std::string error;
     std::array<char, 1024> path{};
     std::shared_ptr<FirmwareOpening> opening;

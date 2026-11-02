@@ -5,7 +5,6 @@
 #include <imgui.h>
 
 #include <device_label.h>
-#include <display_format.h>
 #include <facet_access.h>
 #include <firmware_update_model.h>
 #include <pipe_device_host.h>
@@ -130,6 +129,9 @@ bool GuiApp::updateFirmwareWindow() {
                                                                  client->info(), firmwareEvents_);
         window.seenStage = gf::Stage::Idle;
         window.page = FirmwareWindow::Page::Update;
+        if (window.path[0] != '\0') {
+          window.model->chooseFile(window.path.data());
+        }
       }
     }
   }
@@ -138,6 +140,9 @@ bool GuiApp::updateFirmwareWindow() {
     window.model->pollStatus();
     const gf::ModelView view = window.model->view();
     if (view.stage != window.seenStage) {
+      if (view.stage == gf::Stage::Refused && !view.message.empty()) {
+        logger_.logf(log::LogLevel::warning, "firmware", "Firmware file or update refused: {}", view.message);
+      }
       if (view.stage == gf::Stage::Running) {
         beginFirmwareHold();
       } else if (window.flaggedUpdating) {
@@ -145,6 +150,22 @@ bool GuiApp::updateFirmwareWindow() {
       }
       window.seenStage = view.stage;
       changed = true;
+    }
+    if (view.stage == gf::Stage::Finished && view.finished) {
+      const int resends = view.progress ? view.progress->resends : 0;
+      logger_.logf(view.finished->outcome == fw::Outcome::done ? log::LogLevel::info : log::LogLevel::warning,
+                   "firmware", "Firmware update ended: {}; {} transfers repeated", view.finished->message, resends);
+      window.lastResult = FirmwareWindow::LastResult{*view.finished, window.leavingUpdateMode};
+      window.leavingUpdateMode = false;
+      window.runPage = false;
+      window.browse = false;
+      window.model.reset();
+      if (window.ownedConnection && pipeHost_ != nullptr) {
+        pipeHost_->driverHost().close(window.driverDeviceId);
+      }
+      window.ownedConnection = false;
+      window.page = FirmwareWindow::Page::ChooseDevice;
+      return true;
     }
     if (window.browse) {
       window.browse = false;
@@ -226,6 +247,7 @@ void GuiApp::drawFirmwareWindow() {
     window.deviceId = picked.deviceId;
     window.deviceName = picked.label;
     window.error.clear();
+    window.lastResult.reset();
     window.ownedConnection = !router_.isOpen(picked.driver, picked.deviceId);
     window.driverDeviceId = picked.driver + "/" + picked.deviceId;
     window.page = FirmwareWindow::Page::Opening;
@@ -262,20 +284,41 @@ void GuiApp::drawFirmwareWindow() {
 
   bool close = false;
   const float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
-  const auto details = [](const std::string& text) {
-    if (text.empty()) {
-      return;
-    }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("%s", trf("Technical details: {}", text).c_str());
-    ImGui::PopTextWrapPos();
-  };
   if (ImGui::BeginChild("page", ImVec2(0, -footer))) {
     if (step == 1) {
       if (opening) {
         ImGui::TextUnformatted(trf("Connecting to {}...", window.deviceName).c_str());
       } else {
-        ImGui::TextWrapped("%s", tr("Choose analyzer to update."));
+        if (window.lastResult) {
+          const fw::Finished& done = window.lastResult->finished;
+          const bool installed = done.outcome == fw::Outcome::done && !window.lastResult->leftUpdateMode;
+          switch (done.outcome) {
+            case fw::Outcome::done:
+              ImGui::TextWrapped("%s", window.lastResult->leftUpdateMode
+                                         ? tr("Analyzer left update mode and runs its firmware again.")
+                                         : tr("Firmware installed. Analyzer restarted with new firmware."));
+              break;
+            case fw::Outcome::cancelled:
+              errorText(tr("Update stopped."));
+              break;
+            case fw::Outcome::needsReplug:
+              errorText(tr("Analyzer stopped responding. Unplug it and plug it in again."));
+              break;
+            case fw::Outcome::failed:
+              errorText(tr("Update did not succeed."));
+              break;
+          }
+          if (!done.canCapture) {
+            errorText(tr("Analyzer cannot capture until firmware is installed completely. Run update again: this "
+                         "repairs it."));
+          }
+          if (!installed) {
+            ImGui::TextWrapped("%s", tr("To update, choose analyzer below once it appears again (some seconds)."));
+          }
+          ImGui::Separator();
+        } else {
+          ImGui::TextWrapped("%s", tr("Choose analyzer to update."));
+        }
         ImGui::Spacing();
         if (candidates.empty()) {
           ImGui::PushTextWrapPos(0.0f);
@@ -349,7 +392,9 @@ void GuiApp::drawFirmwareWindow() {
         ImGui::TextWrapped("%s", view.message.c_str());
       } else if (view.stage == gf::Stage::Refused && view.verdict == fw::Verdict::unreadable) {
         errorText(tr("This file is not DLA firmware file."));
-        details(view.message);
+      } else if (view.stage == gf::Stage::Refused && view.verdict == fw::Verdict::unknownFile) {
+        errorText(tr("This file is not one of FNIRSI firmware files known to bitoscope. Install it only if you are "
+                     "sure it is made for your analyzer."));
       } else if (view.stage == gf::Stage::Refused) {
         errorText(view.message);
       }
@@ -378,8 +423,8 @@ void GuiApp::drawFirmwareWindow() {
         ImGui::TextWrapped("%s", view.message.c_str());
       }
       if (view.stage == gf::Stage::Refused) {
-        errorText(tr("Update could not start."));
-        details(view.message);
+        errorText(tr("Update could not start. Try again; if it keeps failing, unplug analyzer and plug it in "
+                     "again."));
       }
       if (view.stage != gf::Stage::Finished && !window.leavingUpdateMode) {
         ImGui::Spacing();
@@ -395,16 +440,7 @@ void GuiApp::drawFirmwareWindow() {
                                                         static_cast<double>(progress.bytesTotal));
           ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f));
           if (progress.phase == fw::Phase::sending) {
-            if (progress.imageName == "MCU") {
-              ImGui::TextUnformatted(tr("Writing part 1 of 2 (control program)"));
-            } else if (progress.imageName == "FPGA") {
-              ImGui::TextUnformatted(tr("Writing part 2 of 2 (capture logic)"));
-            } else {
-              ImGui::TextUnformatted(trf("Writing {}", progress.imageName).c_str());
-            }
-            ImGui::TextUnformatted(trf("{} of {} bytes written", gui_format::withThousands(progress.bytesSent),
-                                       gui_format::withThousands(progress.bytesTotal))
-                                     .c_str());
+            ImGui::TextUnformatted(tr("Installing firmware..."));
           } else if (progress.phase == fw::Phase::finishing) {
             ImGui::TextUnformatted(tr("Finishing: analyzer restarts with new firmware"));
           } else {
@@ -412,54 +448,20 @@ void GuiApp::drawFirmwareWindow() {
           }
           if (progress.attempt > 1) {
             ImGui::TextUnformatted(
-              trf("Started again after problem: try {} of {}", progress.attempt, progress.attempts).c_str());
-          }
-          if (progress.resends != 0) {
-            ImGui::TextUnformatted(
-              trf("Transfers repeated: {} (analyzer did not accept them at first)", progress.resends).c_str());
+              trf("Problem during update: starting again (try {} of {})", progress.attempt, progress.attempts).c_str());
           }
         } else if (view.stage == gf::Stage::Running) {
           ImGui::TextUnformatted(view.message.c_str());
         }
       }
-      if (view.stage == gf::Stage::Finished && view.finished) {
-        const fw::Finished& done = *view.finished;
-        switch (done.outcome) {
-          case fw::Outcome::done:
-            ImGui::TextWrapped("%s", window.leavingUpdateMode
-                                       ? tr("Analyzer left update mode and runs its firmware again. To update it "
-                                            "now, close this window and open Update firmware again.")
-                                       : tr("Firmware installed. Analyzer restarted with new firmware."));
-            break;
-          case fw::Outcome::cancelled:
-            errorText(tr("Update stopped."));
-            break;
-          case fw::Outcome::needsReplug:
-            errorText(tr("Analyzer stopped responding. Unplug it, plug it in again, then open Update firmware "
-                         "again."));
-            break;
-          case fw::Outcome::failed:
-            errorText(tr("Update did not succeed."));
-            break;
-        }
-        if (!done.canCapture) {
-          errorText(tr("Analyzer cannot capture until firmware is installed completely. Run update again: this "
-                       "repairs it."));
-        }
-        if (done.outcome != fw::Outcome::done) {
-          details(done.message);
-        }
-      }
       if (view.stage == gf::Stage::Running && view.cancelNeedsConfirmation) {
-        errorText(tr("Part 2 is being written now. If you stop, analyzer cannot capture until you run update "
-                     "again to its end."));
+        errorText(tr("If you stop now, analyzer cannot capture until you run update again to its end."));
       }
       if (view.stage != gf::Stage::Running && view.stage != gf::Stage::Finished && !window.leavingUpdateMode) {
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("%s", tr("Stopping during part 1 is safe. Stopping during part 2 leaves analyzer unable "
-                                     "to capture until you run update again to its end; this does not damage "
-                                     "analyzer."));
+        ImGui::TextDisabled("%s", tr("You can stop update. If stopping would leave analyzer unable to capture, "
+                                     "you are asked first; running update again repairs it."));
         ImGui::PopTextWrapPos();
       }
     }
@@ -475,7 +477,7 @@ void GuiApp::drawFirmwareWindow() {
   const char* startProgram = tr("Leave update mode");
   const char* stopAnyway = tr("Stop anyway");
   const char* cancel = step == 3 && view.stage == gf::Stage::Running ? tr("Stop update")
-                       : step == 3 && view.stage == gf::Stage::Finished ? tr("Close")
+                       : step == 1 && window.lastResult                 ? tr("Close")
                                                                         : tr("Cancel");
   std::vector<const char*> labels{back, next, startUpdate, cancel};
   if (startingProgram) {
