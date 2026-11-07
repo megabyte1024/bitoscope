@@ -4,8 +4,6 @@
 
 #include "channel_names.h"
 
-#include <format>
-
 namespace bitoscope::gui_capture {
 
 namespace {
@@ -23,9 +21,7 @@ std::string shownChannelName(std::span<const std::string> userNames, std::span<c
                              std::uint32_t deviceChannel) {
   const std::string& user = nameAt(userNames, deviceChannel);
   if (!user.empty()) return user;
-  const std::string& own = nameAt(ownNames, deviceChannel);
-  if (own == std::format("D{}", deviceChannel)) return {};
-  return own;
+  return nameAt(ownNames, deviceChannel);
 }
 
 std::string cleanedChannelName(std::string_view typed) {
@@ -47,9 +43,11 @@ std::string cleanedChannelName(std::string_view typed) {
 
 bool renameChannel(std::vector<std::string>& userNames, std::span<const std::string> ownNames,
                    std::uint32_t deviceChannel, std::string_view typed) {
+  const std::string& own = nameAt(ownNames, deviceChannel);
   std::string name = cleanedChannelName(typed);
+  if (name.empty()) name = own;
   if (name == shownChannelName(userNames, ownNames, deviceChannel)) return false;
-  if (name == shownChannelName({}, ownNames, deviceChannel)) name.clear();
+  if (name == own) name.clear();
   if (deviceChannel >= userNames.size()) userNames.resize(static_cast<std::size_t>(deviceChannel) + 1);
   userNames[deviceChannel] = std::move(name);
   return true;
