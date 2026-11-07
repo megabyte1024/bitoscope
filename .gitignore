@@ -80,3 +80,4 @@ Testing/
 
 # Git worktrees Claude Code creates for its parallel agents (isolation: worktree) - never committed.
 .claude/worktrees/
+.vscode/
