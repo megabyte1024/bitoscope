@@ -24,6 +24,8 @@ std::string formatAnnotation(const std::vector<AnnotationClass>& classes, const 
 std::string formatAnnotation(const std::vector<AnnotationClass>& classes, const Annotation& annotation,
                              const OptionMap& options, const NumberFormat& format);
 
+std::string formatByte(uint8_t byte, const NumberFormat& format);
+
 bool takesDataFormat(const AnnotationClass& cls);
 
 bool showsBytes(const std::vector<AnnotationClass>& classes, uint32_t cls);

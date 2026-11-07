@@ -13,6 +13,7 @@
 
 #include "annotation_store.h"
 #include "decoder.h"
+#include "number_format.h"
 
 namespace bitoscope::gui_decode {
 
@@ -37,5 +38,7 @@ ValueBytes bytesFrom(const ShownResult& shown, std::uint32_t row, const bitoscop
                      std::size_t count);
 
 std::vector<ByteValueLine> byteValueLines(std::span<const std::uint8_t> bytes);
+
+std::string valueBytesText(std::span<const std::uint8_t> bytes, const bitoscope::decode::NumberFormat& format);
 
 }

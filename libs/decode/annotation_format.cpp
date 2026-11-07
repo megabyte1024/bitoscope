@@ -166,6 +166,18 @@ std::string formatAnnotation(const std::vector<AnnotationClass>& classes, const 
   return std::format("<unknown annotation class {}>", annotation.cls);
 }
 
+std::string formatByte(uint8_t byte, const NumberFormat& format) {
+  switch (format.data) {
+  case DataFormat::Dec:
+    return std::format("{}", byte);
+  case DataFormat::Ascii:
+    return asciiText(byte);
+  case DataFormat::Hex:
+    break;
+  }
+  return styledHex(byte, 2, format.style);
+}
+
 bool takesDataFormat(const AnnotationClass& cls) {
   return cls.format.kind == ValueFormatKind::Hex || cls.format.kind == ValueFormatKind::Address7;
 }

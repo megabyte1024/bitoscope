@@ -10,6 +10,7 @@
 #include <format>
 #include <optional>
 
+#include "annotation_format.h"
 #include "byte_search.h"
 
 namespace bitoscope::gui_decode {
@@ -152,6 +153,16 @@ std::vector<ByteValueLine> byteValueLines(std::span<const std::uint8_t> bytes) {
     lines.push_back({ByteValueKind::F32Be, floatText(joined(bytes, kBytesOf32, true))});
   }
   return lines;
+}
+
+std::string valueBytesText(std::span<const std::uint8_t> bytes, const decode::NumberFormat& format) {
+  const std::size_t used = bytes.size() >= kBytesOf32 ? kBytesOf32 : bytes.size() >= kBytesOf16 ? kBytesOf16 : 0;
+  std::string text;
+  for (const std::uint8_t byte : bytes.first(used)) {
+    if (!text.empty()) text += ' ';
+    text += decode::formatByte(byte, format);
+  }
+  return text;
 }
 
 }

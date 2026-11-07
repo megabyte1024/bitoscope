@@ -1777,8 +1777,9 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
               if (valueLines.empty()) {
                 ImGui::SetTooltip("%s", laneText.text(a).c_str());
               } else {
+                const decode::NumberFormat rowFormat{hexStyle_, config.rowDataFormat(a.row)};
                 ImGui::BeginTooltip();
-                ImGui::TextUnformatted(laneText.text(a).c_str());
+                ImGui::TextUnformatted(gd::valueBytesText(valueBytes.span(), rowFormat).c_str());
                 drawByteValueLines(valueLines, em);
                 ImGui::EndTooltip();
               }
