@@ -613,6 +613,12 @@ bool GuiApp::wantsMoreFrames() const {
       return true;
     }
   }
+  const double nowMs = ImGui::GetTime() * 1000.0;
+  for (const auto& [id, ui] : sessionUi_) {
+    if (ui.waveform && ui.waveform->laneGlide.wantsFrames(nowMs)) {
+      return true;
+    }
+  }
   return ImGui::IsAnyItemActive();
 }
 

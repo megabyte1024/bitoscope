@@ -1029,6 +1029,7 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       }
     }
     if (laneScroll != ImGui::GetScrollY()) {
+      waveform->laneGlide.stop();
       ImGui::SetScrollY(laneScroll);
     }
     ImGui::SetCursorPos(ImVec2(0, 0));
@@ -1499,11 +1500,25 @@ void GuiApp::drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
     const bool headersHovered = ImGui::IsWindowHovered() && io.MousePos.x < traceLeft;
+    const double nowMs = ImGui::GetTime() * 1000.0;
+    const double shownScroll = static_cast<double>(ImGui::GetScrollY());
     if (headersHovered && io.MouseWheel != 0.0f && lanesScroll) {
-      ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseWheel * pitch);
+      waveform->laneGlide.addLanes(shownScroll, -static_cast<double>(io.MouseWheel), static_cast<double>(pitch),
+                                   regions.maxScroll, nowMs);
     }
     if ((tracesHovered || rulerHovered) && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)) {
-      wv::applyWheel(viewport, wv::wheelAction(io.MouseWheel, io.MouseWheelH, modifiers(io)), mouseX, viewTotal);
+      const wv::WheelAction wheel = wv::wheelAction(io.MouseWheel, io.MouseWheelH, modifiers(io));
+      wv::applyWheel(viewport, wheel, mouseX, viewTotal);
+      if (wheel.laneScrollLanes != 0.0 && lanesScroll) {
+        waveform->laneGlide.addLanes(shownScroll, wheel.laneScrollLanes, static_cast<double>(pitch), regions.maxScroll,
+                                     nowMs);
+      }
+    }
+    if (tracesActive) {
+      waveform->laneGlide.stop();
+    }
+    if (const std::optional<double> glided = waveform->laneGlide.step(shownScroll, regions.maxScroll, nowMs)) {
+      ImGui::SetScrollY(static_cast<float>(*glided));
     }
     const bool keysFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if ((keysFocused || tracesHovered || rulerHovered) && !io.WantTextInput && !ImGui::IsAnyItemActive() &&

@@ -15,6 +15,8 @@ namespace {
 
 bool reservedModifier(KeyModifiers m) { return m.ctrl || m.alt || m.super; }
 
+bool reservedWheelModifier(KeyModifiers m) { return m.alt || m.super; }
+
 }
 
 ViewCommand commandForKey(ViewKey key, KeyModifiers modifiers) {
@@ -72,7 +74,11 @@ void applyCommand(Viewport& viewport, ViewCommand command, double anchorPixelX, 
 
 WheelAction wheelAction(double verticalNotches, double horizontalNotches, KeyModifiers modifiers) {
   WheelAction action;
-  if (reservedModifier(modifiers)) return action;
+  if (reservedWheelModifier(modifiers)) return action;
+  if (modifiers.ctrl) {
+    action.laneScrollLanes = -verticalNotches;
+    return action;
+  }
   if (modifiers.shift) {
     action.panPixels = (horizontalNotches - verticalNotches) * kWheelPanPixels;
     return action;
@@ -85,6 +91,10 @@ WheelAction wheelAction(double verticalNotches, double horizontalNotches, KeyMod
 void applyWheel(Viewport& viewport, const WheelAction& action, double mouseX, uint64_t totalSamples) {
   if (action.zoomFactor != 1.0) viewport.zoomAroundPixel(action.zoomFactor, mouseX, totalSamples);
   if (action.panPixels != 0.0) viewport.panPixels(action.panPixels, totalSamples);
+}
+
+double laneScrollAfterWheel(double scrollY, double laneScrollLanes, double pitch, double maxScroll) {
+  return (std::clamp)(scrollY + laneScrollLanes * pitch, 0.0, (std::max)(0.0, maxScroll));
 }
 
 void applyDrag(Viewport& viewport, double mouseDeltaX, uint64_t totalSamples) {

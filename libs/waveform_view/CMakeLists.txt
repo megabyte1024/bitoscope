@@ -9,6 +9,7 @@ add_library(bitoscope_waveform_view STATIC
     pulse_measurement.cpp
     time_ruler.cpp
     interaction.cpp
+    lane_glide.cpp
     pointer_grab.cpp
     channel_colors.cpp
     color_choice.cpp

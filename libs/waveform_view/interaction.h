@@ -61,11 +61,14 @@ void applyCommand(Viewport& viewport, ViewCommand command, double anchorPixelX, 
 struct WheelAction {
   double zoomFactor = 1.0;
   double panPixels = 0.0;
+  double laneScrollLanes = 0.0;
 };
 
 WheelAction wheelAction(double verticalNotches, double horizontalNotches, KeyModifiers modifiers);
 
 void applyWheel(Viewport& viewport, const WheelAction& action, double mouseX, uint64_t totalSamples);
+
+double laneScrollAfterWheel(double scrollY, double laneScrollLanes, double pitch, double maxScroll);
 
 void applyDrag(Viewport& viewport, double mouseDeltaX, uint64_t totalSamples);
 

@@ -12,6 +12,7 @@
 #include <cursors.h>
 #include <extent_waveform_source.h>
 #include <lane_header.h>
+#include <lane_glide.h>
 #include <lane_order.h>
 #include <live_tail_source.h>
 #include <live_view.h>
@@ -52,6 +53,7 @@ struct SessionWaveform {
   double grabbedSample = 0;
   double panScrollAtPress = 0;
   double panPressY = 0;
+  waveform_view::LaneGlide laneGlide;
 
   waveform_view::MarkerList markers;
   std::optional<waveform_view::MarkerId> contextMarker;
