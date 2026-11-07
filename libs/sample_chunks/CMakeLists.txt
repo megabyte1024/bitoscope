@@ -25,9 +25,23 @@ target_link_libraries(bitoscope_decode_ring_producer PUBLIC bitoscope_bulk_ring)
 target_compile_features(bitoscope_decode_ring_producer PUBLIC cxx_std_23)
 bitoscope_enable_warnings(bitoscope_decode_ring_producer)
 
+add_library(bitoscope_window_assembler_kernels OBJECT
+    window_assembler_kernels.cpp
+)
+
+target_include_directories(bitoscope_window_assembler_kernels PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/libs/core
+)
+
+target_compile_features(bitoscope_window_assembler_kernels PUBLIC cxx_std_23)
+bitoscope_enable_warnings(bitoscope_window_assembler_kernels)
+# WHY: Kept out of LTO: inlined into WindowAssembler::submit, the kernels run up to 1.9 times slower.
+set_target_properties(bitoscope_window_assembler_kernels PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+
 add_library(bitoscope_window_assembler STATIC
     window_assembler.cpp
-    window_assembler_kernels.cpp
+    $<TARGET_OBJECTS:bitoscope_window_assembler_kernels>
 )
 
 target_include_directories(bitoscope_window_assembler PUBLIC

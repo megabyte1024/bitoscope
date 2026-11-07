@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: MIT
 
 add_library(bitoscope_gui_format STATIC
+    channel_grid_layout.cpp
+    channel_grid_layout.h
     display_format.cpp
     display_format.h
     log_scroll.cpp
     log_scroll.h
     property_tree_layout.cpp
     property_tree_layout.h
+    toolbar_layout.cpp
+    toolbar_layout.h
     version_format.cpp
     version_format.h
 )

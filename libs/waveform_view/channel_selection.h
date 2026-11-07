@@ -13,6 +13,8 @@ class WaveformSource;
 
 bool toggleChannelSelection(std::vector<bool>& selected, std::uint32_t channel);
 
+bool setChannelSelected(std::vector<bool>& selected, std::uint32_t channel, bool select);
+
 void selectAllChannels(std::vector<bool>& selected);
 
 void selectOneChannel(std::vector<bool>& selected);

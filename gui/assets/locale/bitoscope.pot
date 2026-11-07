@@ -293,6 +293,10 @@ msgid "Reset to default"
 msgstr ""
 
 #: gui/app/decoder_panel.cpp
+msgid "(none)"
+msgstr ""
+
+#: gui/app/decoder_panel.cpp
 msgid "Filter decoders"
 msgstr ""
 
@@ -314,10 +318,6 @@ msgstr ""
 
 #: gui/app/decoder_panel.cpp
 msgid "Add decoder"
-msgstr ""
-
-#: gui/app/decoder_panel.cpp
-msgid "(none)"
 msgstr ""
 
 #: gui/app/decoder_panel.cpp
@@ -952,11 +952,11 @@ msgid "Open saved session..."
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "No device"
+msgid "Pre-trigger"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "Device"
+msgid "No device"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -976,6 +976,14 @@ msgid "(connecting: {})"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "Device"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Share of length before trigger, when channel has one"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "Capture"
 msgstr ""
 
@@ -992,19 +1000,11 @@ msgid "Length"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "Pre-trigger"
-msgstr ""
-
-#: gui/app/panels.cpp
 msgid "Fixed while device runs"
 msgstr ""
 
 #: gui/app/panels.cpp
 msgid "Channels next capture takes; lane of capture shown is hidden while its channel is not selected"
-msgstr ""
-
-#: gui/app/panels.cpp
-msgid "Share of length before trigger, when channel has one"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -1052,7 +1052,19 @@ msgid "Reset"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "Channel {}"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Channel {}: {}"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "At least one channel must stay selected"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Click or drag across channels to select or deselect them"
 msgstr ""
 
 #: gui/app/panels.cpp
@@ -1072,10 +1084,6 @@ msgid "All"
 msgstr ""
 
 #: gui/app/panels.cpp
-msgid "No channel has pulses: every lane stays high or low"
-msgstr ""
-
-#: gui/app/panels.cpp
 msgid "Hide channels whose lane stays high or low for whole capture"
 msgstr ""
 
@@ -1084,7 +1092,23 @@ msgid "No capture is shown"
 msgstr ""
 
 #: gui/app/panels.cpp
+msgid "Select only channels connected to decoder"
+msgstr ""
+
+#: gui/app/panels.cpp
 msgid "No channel is connected to decoder"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Select only first channel"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "Select every channel"
+msgstr ""
+
+#: gui/app/panels.cpp
+msgid "No channel has pulses: every lane stays high or low"
 msgstr ""
 
 #: gui/app/panels.cpp

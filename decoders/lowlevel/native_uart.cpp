@@ -23,7 +23,7 @@ using plugin::ValueFormat;
 DecoderDeclaration NativeUart::declaration() const {
   DecoderDeclaration d;
   d.name = "uart";
-  d.version = "0.3.0";
+  d.version = "0.4.0";
   d.channels = {{.name = "rx", .description = "receive line", .optional = true, .display = "RX"},
                 {.name = "tx", .description = "transmit line", .optional = true, .display = "TX"}};
   d.options = {
@@ -84,6 +84,8 @@ DecoderDeclaration NativeUart::declaration() const {
       {.id = kClassParityError, .name = "Parity error", .role = AnnotationRole::error},
       {.id = kClassFrameCutOff, .name = "Frame cut off", .role = AnnotationRole::error},
       {.id = kClassBit, .format = ValueFormat::decimal, .role = AnnotationRole::bit},
+      {.id = kClassBreak, .name = "Break", .role = AnnotationRole::control},
+      {.id = kClassFalseStart, .name = "False start", .role = AnnotationRole::error},
   };
   d.rows = {{kRowRxBits, "RX bits"}, {kRowRx, "RX"}, {kRowTxBits, "TX bits"}, {kRowTx, "TX"}};
   const plugin::BitGrid grid{
@@ -170,13 +172,13 @@ struct Frame {
   uint64_t start = 0;
   uint64_t stopEnd = 0;
   uint64_t value = 0;
-  bool framingError = false;
+  uint64_t firstRise = UINT64_MAX;
   bool parityError = false;
   bool stopError = false;
   bool cutOff = false;
 };
 
-enum class Phase : uint8_t { awaitIdle, seek, awaitStart, frame };
+enum class Phase : uint8_t { awaitIdle, seek, awaitStart, frame, heldLow };
 
 struct Line {
   uint32_t row = 0;
@@ -220,8 +222,12 @@ class UartWalk {
       Line& line = lines_[i];
       line.idle = c.after(i) != line.invert;
       line.lastEdge = at;
+      if (line.phase == Phase::frame && line.idle && line.frame.firstRise == UINT64_MAX) line.frame.firstRise = at;
       if (line.phase == Phase::awaitIdle && line.idle) {
         line.phase = Phase::awaitStart;
+      } else if (line.phase == Phase::heldLow && line.idle) {
+        line.phase = Phase::awaitStart;
+        emitBreak(line, at);
       } else if (line.phase == Phase::awaitStart && !line.idle) {
         begin(line, at);
       }
@@ -251,7 +257,7 @@ class UartWalk {
   uint64_t oldestOpen() const {
     uint64_t mark = UINT64_MAX;
     for (const Line& line : lines_) {
-      if (line.phase == Phase::frame) {
+      if (line.phase == Phase::frame || line.phase == Phase::heldLow) {
         mark = (std::min)(mark, line.frame.start);
       } else if (line.phase == Phase::seek) {
         mark = (std::min)(mark, line.next);
@@ -290,9 +296,15 @@ class UartWalk {
       const uint32_t k = line.point;
       const bool mark = line.idle;
       Frame& frame = line.frame;
-      if (k == lastPoint_) {
+      if (k == lastPoint_ && heldLowSinceFrameStart(line)) {
+        line.point = k + 1;
+        line.next = frame.start + f_.end;
+        continue;
+      }
+      if (k >= lastPoint_) {
         if (heldLowSinceFrameStart(line)) {
-          awaitIdle(line);
+          line.phase = Phase::heldLow;
+          line.next = UINT64_MAX;
           return;
         }
         frame.stopEnd = frame.start + f_.end;
@@ -300,7 +312,10 @@ class UartWalk {
         continue;
       }
       if (k == 0) {
-        frame.framingError = mark;
+        if (mark) {
+          falseStart(line);
+          return;
+        }
       } else if (k <= f_.dataBits) {
         line.ones += mark ? 1u : 0u;
         frame.value = f_.msbFirst ? (frame.value << 1) | (mark ? 1u : 0u)
@@ -329,16 +344,26 @@ class UartWalk {
       return;
     }
     const uint64_t dataEnd = s + f_.begin[1 + f_.dataBits];
-    out_.emit(s, s + f_.begin[1], line.row, frame.framingError ? NativeUart::kClassFramingError : NativeUart::kClassStart,
-              0);
+    out_.emit(s, s + f_.begin[1], line.row, NativeUart::kClassStart, 0);
     out_.emit(s + f_.begin[1], dataEnd, line.row, NativeUart::kClassData, frame.value);
     if (frame.parityError) {
       out_.emit(dataEnd, s + f_.begin[2 + f_.dataBits], line.row, NativeUart::kClassParityError, 0);
     }
     out_.emit(s + f_.begin[stopPoint_], frame.stopEnd, line.row,
               frame.stopError ? NativeUart::kClassFramingError : NativeUart::kClassStop, 0);
-    const bool damaged = frame.framingError || frame.parityError || frame.stopError;
+    const bool damaged = frame.parityError || frame.stopError;
     line.words.put(s + f_.begin[1], dataEnd, plugin::kItemData, frame.value, damaged ? plugin::kItemDamaged : 0u);
+  }
+
+  void falseStart(Line& line) {
+    out_.emit(line.frame.start, line.frame.firstRise, line.row, NativeUart::kClassFalseStart, 0);
+    line.phase = Phase::awaitStart;
+    line.next = UINT64_MAX;
+  }
+
+  void emitBreak(const Line& line, uint64_t end) {
+    out_.emit(line.frame.start, end, line.row, NativeUart::kClassBreak, 0);
+    line.words.put(line.frame.start, end, plugin::kItemBoundary, 0, 0);
   }
 
   const Framing& f_;

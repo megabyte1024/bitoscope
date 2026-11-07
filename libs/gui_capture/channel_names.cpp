@@ -28,12 +28,6 @@ std::string shownChannelName(std::span<const std::string> userNames, std::span<c
   return own;
 }
 
-std::string channelChoiceLabel(std::span<const std::string> userNames, std::span<const std::string> ownNames,
-                               std::uint32_t deviceChannel) {
-  const std::string shown = shownChannelName(userNames, ownNames, deviceChannel);
-  return shown.empty() ? std::to_string(deviceChannel) : std::format("{} {}", deviceChannel, shown);
-}
-
 std::string cleanedChannelName(std::string_view typed) {
   std::string out;
   out.reserve(typed.size());

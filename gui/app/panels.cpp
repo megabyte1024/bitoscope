@@ -6,6 +6,7 @@
 #include <imgui_internal.h>
 
 #include <channel_colors.h>
+#include <channel_names.h>
 #include <capture_settings.h>
 #include <channel_selection.h>
 #include <default_channel_colors.h>
@@ -25,6 +26,7 @@
 #include <property_editor_model.h>
 #include <text_field.h>
 #include <property_tree_layout.h>
+#include <toolbar_layout.h>
 #include <version_format.h>
 
 #include <algorithm>
@@ -120,7 +122,14 @@ gui_format::PropertyTreeColumns propertyColumnsFor(const std::vector<std::string
 void propertyRowLabel(const char* label, gui_format::PropertyTreeColumns columns, const char* help = nullptr) {
   const float rowStartX = ImGui::GetCursorPosX();
   ImGui::AlignTextToFramePadding();
+  const bool wrapLabel = columns.labelText > 0.0f;
+  if (wrapLabel) {
+    ImGui::PushTextWrapPos(rowStartX + columns.labelText);
+  }
   ImGui::TextUnformatted(label);
+  if (wrapLabel) {
+    ImGui::PopTextWrapPos();
+  }
   if (help != nullptr && help[0] != '\0') {
     tooltip(help);
   }
@@ -200,6 +209,45 @@ const char* levelLabel(log::LogLevel level) {
 
 ImVec4 selectedButtonFill() {
   return ImGui::GetStyleColorVec4(ImGuiCol_Header);
+}
+
+void preTriggerSlider(gui_capture::CaptureSettings& settings, const char* id, const char* format) {
+  int percent = static_cast<int>(settings.preTriggerPercent);
+  if (ImGui::SliderInt(id, &percent, 0, 100, format)) {
+    settings.preTriggerPercent = static_cast<std::uint32_t>(std::clamp(percent, 0, 100));
+  }
+}
+
+std::string sliderFormatWithLabel(const char* label) {
+  std::string format;
+  for (const char* c = label; *c != '\0'; ++c) {
+    format += *c == '%' ? std::string("%%") : std::string(1, *c);
+  }
+  return format + " %d %%";
+}
+
+constexpr std::size_t kToolbarChannelsPerRow = 16;
+constexpr std::size_t kToolbarChannelGroup = 8;
+
+void drawToolbarDeviceText(const std::string& text, float width, bool disabled) {
+  if (disabled) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  }
+  ImGui::AlignTextToFramePadding();
+  const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+  if (size.x <= width) {
+    ImGui::TextUnformatted(text.c_str());
+  } else {
+    const ImVec2 position = ImGui::GetCursorScreenPos();
+    const float top = position.y + ImGui::GetStyle().FramePadding.y;
+    ImGui::Dummy(ImVec2(width, ImGui::GetFrameHeight()));
+    ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), ImVec2(position.x, top),
+                              ImVec2(position.x + width, top + size.y), position.x + width, text.c_str(),
+                              text.c_str() + text.size(), &size);
+  }
+  if (disabled) {
+    ImGui::PopStyleColor();
+  }
 }
 
 }
@@ -671,6 +719,7 @@ void GuiApp::closeSession(gui_session::SessionId id) {
 }
 
 void GuiApp::drawSessionToolbar(const gui_session::Session& session, SessionUi& ui) {
+  const float toolbarLineWidth = ImGui::GetContentRegionAvail().x;
   const bool stop = sessions_.startStopAction(session.id) == gui_session::StartStop::Stop;
   const bool enabled = stop ? sessions_.canStop(session.id) && !ui.capture.stopRequested()
                             : sessions_.canStart(session.id);
@@ -703,53 +752,111 @@ void GuiApp::drawSessionToolbar(const gui_session::Session& session, SessionUi& 
     requestOpen();
   }
 
-  ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 3);
-  ImGui::AlignTextToFramePadding();
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float em = ImGui::GetFontSize();
+  ImGui::SameLine(0, style.ItemSpacing.x * 3);
+
+  const bool captureControls = ui.settings && ui.capabilities;
+  const std::size_t channelCount = captureControls      ? ui.settings->channels.size()
+                                   : !ui.openedFrom.empty() ? ui.fileLanesShown.size()
+                                                            : 0;
+  const std::vector<std::size_t> rowLengths =
+    gui_format::toolbarRowLengthChoices(channelCount, kToolbarChannelsPerRow);
+  std::vector<float> channelWidths;
+  if (captureControls || !ui.openedFrom.empty()) {
+    for (const std::size_t perRow : rowLengths) {
+      channelWidths.push_back(toolbarChannelGroupWidth(channelCount, perRow));
+    }
+  }
+  const float rateLengthWidth = em * 20.0f + style.ItemSpacing.x;
+  const std::string preTriggerFormat = sliderFormatWithLabel(tr("Pre-trigger"));
+  const float preTriggerWidth =
+    ImGui::CalcTextSize((std::string(tr("Pre-trigger")) + " 100 %").c_str()).x + style.FramePadding.x * 2 + em;
+  std::vector<float> groupsBefore;
+  std::vector<float> groupsAfter;
+  if (captureControls) {
+    groupsBefore.push_back(rateLengthWidth);
+    groupsAfter.push_back(preTriggerWidth);
+  }
+  groupsAfter.push_back(waveformToolbarWidth());
+
+  const bool deviceShown = session.openedFrom.empty() && session.device != std::nullopt;
+  const std::string deviceText = session.openedFrom.empty() && !deviceShown ? std::string(tr("No device")) : ui.device;
+  const bool deviceConnected = deviceShown && session.deviceState == gui_session::DeviceState::Connected;
+  gui_devices::HeaderStatus status{};
+  std::string suffix;
+  if (deviceShown && !deviceConnected) {
+    status = gui_devices::sessionHeaderStatus(router_, session);
+    if (status.kind == gui_devices::HeaderKind::Lost) {
+      suffix = tr("(disconnected)");
+    } else if (status.kind == gui_devices::HeaderKind::Waiting) {
+      suffix = tr("(waiting)");
+    } else {
+      const std::string progress = reasonWithDetail(status.reason, status.detail);
+      suffix = progress.empty() ? std::string(tr("(connecting...)")) : trf("(connecting: {})", progress);
+    }
+  }
+  const float suffixWidth = suffix.empty() ? 0.0f : style.ItemSpacing.x + ImGui::CalcTextSize(suffix.c_str()).x;
+  const float deviceTextWidth = ImGui::CalcTextSize(deviceText.c_str()).x;
+  const gui_format::ToolbarFit fit = gui_format::fitToolbar(gui_format::ToolbarFitInput{
+    .availableOnLine = ImGui::GetContentRegionAvail().x - suffixWidth,
+    .lineWidth = toolbarLineWidth,
+    .groupGap = style.ItemSpacing.x * 3,
+    .labelWidth = deviceTextWidth,
+    .labelMinimum = em * 6.0f,
+    .groupsBefore = groupsBefore,
+    .channelChoices = channelWidths,
+    .groupsAfter = groupsAfter});
+  const std::string fullName = fit.labelWidth < deviceTextWidth ? deviceText + "\n" : std::string();
+
+  const bool deviceDisabled = session.openedFrom.empty() && !deviceConnected;
+  drawToolbarDeviceText(deviceText, fit.labelWidth, deviceDisabled);
   if (!session.openedFrom.empty()) {
-    ImGui::TextUnformatted(ui.device.c_str());
-    tooltip(ui.openedInfo.c_str());
-  } else if (session.device == std::nullopt) {
-    ImGui::TextDisabled("%s", tr("No device"));
+    tooltip((fullName + ui.openedInfo).c_str());
+  } else if (!deviceShown) {
     tooltip(tr("Device"));
   } else {
     const std::string driverLine =
       driverVersionLine(gui_devices::shownDriverName(router_.catalog(), session.device->driver),
                         gui_devices::sessionDriverVersion(router_, *session.device));
-    if (session.deviceState == gui_session::DeviceState::Connected) {
-      ImGui::TextUnformatted(ui.device.c_str());
-      tooltip((std::string(tr("Device")) + "\n" + driverLine).c_str());
+    if (deviceConnected) {
+      tooltip((fullName + tr("Device") + "\n" + driverLine).c_str());
     } else {
-      const gui_devices::HeaderStatus status = gui_devices::sessionHeaderStatus(router_, session);
-      ImGui::TextDisabled("%s", ui.device.c_str());
-      tooltip(driverLine.c_str());
+      tooltip((fullName + driverLine).c_str());
       ImGui::SameLine();
       if (status.kind == gui_devices::HeaderKind::Lost) {
         ImGui::PushStyleColor(ImGuiCol_Text, errorTextColor(darkInUse()));
-        ImGui::TextUnformatted(tr("(disconnected)"));
+        ImGui::TextUnformatted(suffix.c_str());
         ImGui::PopStyleColor();
         tooltip((trf("Device lost: {}", status.detail) + "\n" + driverLine).c_str());
       } else if (status.kind == gui_devices::HeaderKind::Waiting) {
-        ImGui::TextDisabled("%s", tr("(waiting)"));
+        ImGui::TextDisabled("%s", suffix.c_str());
         tooltip((trf("Waiting for device: {}", reasonWithDetail(status.reason, status.detail)) + "\n" + driverLine)
                   .c_str());
       } else {
-        const std::string progress = reasonWithDetail(status.reason, status.detail);
-        ImGui::TextDisabled("%s", progress.empty() ? tr("(connecting...)")
-                                                   : trf("(connecting: {})", progress).c_str());
+        ImGui::TextDisabled("%s", suffix.c_str());
         tooltip((std::string(tr("Connecting to device...")) + "\n" + driverLine).c_str());
       }
     }
   }
 
-  if (ui.settings && ui.capabilities) {
+  const std::size_t channelsPerRow = rowLengths[fit.channelChoice];
+  if (captureControls) {
     ImGui::BeginDisabled(session.running);
-    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 3);
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
+    nextToolbarGroup(rateLengthWidth);
+    ImGui::SetNextItemWidth(em * 7.0f);
     rateCombo(ui, withId("", "rate").c_str());
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 13.0f);
+    ImGui::SetNextItemWidth(em * 13.0f);
     lengthCombo(ui, withId("", "length").c_str());
+    drawToolbarChannels(ui, ui.settings->channels, {}, channelsPerRow);
+    nextToolbarGroup(preTriggerWidth);
+    ImGui::SetNextItemWidth(preTriggerWidth);
+    preTriggerSlider(*ui.settings, "##toolbar_pretrigger", preTriggerFormat.c_str());
+    tooltip(tr("Share of length before trigger, when channel has one"));
     ImGui::EndDisabled();
+  } else if (!ui.openedFrom.empty()) {
+    drawToolbarChannels(ui, ui.fileLanesShown, ui.keptDeviceChannels, channelsPerRow);
   }
   drawWaveformToolbar(ui);
 
@@ -895,20 +1002,11 @@ void GuiApp::drawPropertiesActivityBar(SessionUi& ui, float width) {
 
 void GuiApp::drawDeviceProperties(SessionUi& ui) {
   ImGui::SeparatorText(tr("Capture"));
-  const auto connectedChannels = [&] {
-    std::vector<std::uint32_t> connected;
-    for (const auto& decoder : ui.decoders) {
-      const std::vector<std::uint32_t> bound = decoder.boundDeviceChannels();
-      connected.insert(connected.end(), bound.begin(), bound.end());
-    }
-    return connected;
-  };
   if (!ui.openedFrom.empty()) {
     const gui_format::PropertyTreeColumns columns = propertyColumnsFor({tr("Channels")});
     propertyRowLabel(tr("Channels"), columns,
                      tr("Channels of file; lane is hidden while its channel is not selected"));
-    drawChannelSelector(ui.fileLanesShown, ui.channelColors, connectedChannels(), ui.waveform.get(),
-                        ui.keptDeviceChannels);
+    drawChannelSelector(ui, ui.fileLanesShown, ui.keptDeviceChannels);
   } else if (!ui.settings || !ui.capabilities) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%s", ui.capabilitiesProblem.empty()
@@ -926,13 +1024,9 @@ void GuiApp::drawDeviceProperties(SessionUi& ui) {
     propertyRowLabel(tr("Channels"), columns,
                      tr("Channels next capture takes; lane of capture shown is hidden "
                         "while its channel is not selected"));
-    drawChannelSelector(ui.settings->channels, ui.channelColors, connectedChannels(), ui.waveform.get());
-    propertyRowLabel(tr("Pre-trigger"), columns,
-                     tr("Share of length before trigger, when channel has one"));
-    int percent = static_cast<int>(ui.settings->preTriggerPercent);
-    if (ImGui::SliderInt("##pretrigger", &percent, 0, 100, "%d %%")) {
-      ui.settings->preTriggerPercent = static_cast<std::uint32_t>(std::clamp(percent, 0, 100));
-    }
+    drawChannelSelector(ui, ui.settings->channels);
+    propertyRowLabel(tr("Pre-trigger"), columns, tr("Share of length before trigger, when channel has one"));
+    preTriggerSlider(*ui.settings, "##pretrigger", "%d %%");
     ImGui::EndDisabled();
   }
 
@@ -1239,96 +1333,162 @@ void GuiApp::drawPropertyRow(SessionUi& ui, const std::string& facetName, gui_pr
   }
 }
 
-void GuiApp::drawChannelSelector(std::vector<bool>& selected, const std::vector<waveform_view::ColorChoice>& colors,
-                                 const std::vector<std::uint32_t>& connected, const SessionWaveform* shown,
+void GuiApp::drawChannelSelector(SessionUi& ui, std::vector<bool>& selected,
                                  const std::vector<std::uint32_t>& entryChannel) {
+  const float buttonSize = std::round(ImGui::GetFontSize() * 1.7f);
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float controlX = ImGui::GetCursorScreenPos().x;
+  gui_format::ChannelGridSpec spec;
+  spec.perRow = static_cast<std::size_t>(
+    gui_format::buttonsPerRow(ImGui::GetContentRegionAvail().x, buttonSize, style.ItemSpacing.x));
+  spec.tileWidth = buttonSize;
+  spec.tileHeight = buttonSize;
+  spec.gapX = style.ItemSpacing.x;
+  spec.gapY = style.ItemSpacing.y;
+  drawChannelGrid("##channels", ui, selected, entryChannel, gui_format::channelGrid(selected.size(), spec),
+                  ImGui::GetFontSize());
+  ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
+  drawChannelPresets(ui, selected, entryChannel, ChannelPresetLook::Text);
+}
+
+void GuiApp::drawChannelGrid(const char* id, const SessionUi& ui, std::vector<bool>& selected,
+                             const std::vector<std::uint32_t>& entryChannel, const gui_format::ChannelGrid& grid,
+                             float numberSize) {
   namespace wv = waveform_view;
   namespace gc = gui_capture;
   const bool dark = darkInUse();
-  const float em = ImGui::GetFontSize();
-  const float buttonSize = std::round(em * 1.7f);
-  const float rounding = std::round(buttonSize * 0.3f);
+  const float rounding = std::round((std::min)(grid.tileWidth, grid.tileHeight) * 0.3f);
   const float outline = (std::max)(1.0f, std::round(uiScale()));
-  const float gap = ImGui::GetStyle().ItemSpacing.x;
   ImDrawList* draw = ImGui::GetWindowDrawList();
-  const float controlX = ImGui::GetCursorScreenPos().x;
-  const std::size_t perRow = static_cast<std::size_t>(
-    gui_format::buttonsPerRow(ImGui::GetContentRegionAvail().x, buttonSize, gap));
-
-  for (std::size_t i = 0; i < selected.size(); ++i) {
-    if (i % perRow != 0) {
-      ImGui::SameLine(0.0f, gap);
-    } else if (i != 0) {
-      ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
+  const ImVec2 origin = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton(id, ImVec2((std::max)(1.0f, grid.width), (std::max)(1.0f, grid.height)));
+  const ImGuiID paintKey = ImGui::GetItemID();
+  const ImVec2 mouse = ImGui::GetIO().MousePos;
+  const std::optional<std::size_t> under =
+    gui_format::channelGridCellAt(grid, mouse.x - origin.x, mouse.y - origin.y);
+  const bool overChannel = under && *under < selected.size();
+  constexpr int kNoPaint = -1;
+  ImGuiStorage* storage = ImGui::GetStateStorage();
+  if (ImGui::IsItemActivated()) {
+    storage->SetInt(paintKey, overChannel ? static_cast<int>(!selected[*under]) : kNoPaint);
+  }
+  if (ImGui::IsItemActive() && overChannel) {
+    const int paint = storage->GetInt(paintKey, kNoPaint);
+    if (paint != kNoPaint) {
+      wv::setChannelSelected(selected, static_cast<std::uint32_t>(*under), paint == 1);
     }
-    const std::uint32_t channel = i < entryChannel.size() ? entryChannel[i] : static_cast<std::uint32_t>(i);
-    const wv::SelectorButtonColors button = wv::selectorButtonColors(gc::channelColorOrPalette(colors, channel), dark);
+  }
+  const auto channelOf = [&](std::size_t i) {
+    return i < entryChannel.size() ? entryChannel[i] : static_cast<std::uint32_t>(i);
+  };
+  if (overChannel && !ImGui::IsItemActive() && ImGui::IsItemHovered()) {
+    const std::uint32_t channel = channelOf(*under);
+    const std::string name = gc::shownChannelName(ui.channelUserNames, ui.channelNames, channel);
+    std::string tip = name.empty() ? trf("Channel {}", channel) : trf("Channel {}: {}", channel, name);
+    tip += "\n";
+    tip += selected[*under] && std::count(selected.begin(), selected.end(), true) == 1
+             ? tr("At least one channel must stay selected")
+             : tr("Click or drag across channels to select or deselect them");
+    ImGui::SetTooltip("%s", tip.c_str());
+  }
+
+  ImFont* font = ImGui::GetFont();
+  for (std::size_t i = 0; i < selected.size() && i < grid.cells.size(); ++i) {
+    const std::uint32_t channel = channelOf(i);
+    const wv::SelectorButtonColors button = wv::selectorButtonColors(gc::channelColorOrPalette(ui.channelColors, channel), dark);
     // WHY: Raw ImU32 colours skip the style alpha that BeginDisabled lowers, so apply it here.
     const ImU32 color = ImGui::GetColorU32(IM_COL32(button.fill.r, button.fill.g, button.fill.b, 255));
-    const bool needsOutline = button.outlined;
     const ImU32 outlineColor =
       ImGui::GetColorU32(IM_COL32(button.outline.r, button.outline.g, button.outline.b, 255));
     const ImU32 markColor =
       ImGui::GetColorU32(IM_COL32(button.unselectedMark.r, button.unselectedMark.g, button.unselectedMark.b, 255));
     const ImU32 selectedTextColor =
       ImGui::GetColorU32(IM_COL32(button.selectedText.r, button.selectedText.g, button.selectedText.b, 255));
-    const bool isSelected = selected[i];
-    const bool isOnlySelected =
-      isSelected && std::count(selected.begin(), selected.end(), true) == 1;
-
-    ImGui::PushID(static_cast<int>(i));
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##channel_toggle", ImVec2(buttonSize, buttonSize));
-    const bool hovered = ImGui::IsItemHovered();
-    const bool clicked = ImGui::IsItemClicked();
-    const ImVec2 max(pos.x + buttonSize, pos.y + buttonSize);
-    if (isSelected) {
+    const ImVec2 pos(origin.x + grid.cells[i].x, origin.y + grid.cells[i].y);
+    const ImVec2 max(pos.x + grid.tileWidth, pos.y + grid.tileHeight);
+    if (selected[i]) {
       draw->AddRectFilled(pos, max, color, rounding);
-      if (needsOutline) {
+      if (button.outlined) {
         addEdgeCentredOutline(draw, pos, max, outlineColor, rounding, outline);
       }
     } else {
       addEdgeCentredOutline(draw, pos, max, markColor, rounding, outline);
     }
-    const std::string label = std::to_string(channel);
-    const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-    const ImU32 textColor = isSelected ? selectedTextColor : markColor;
-    draw->AddText(ImVec2(pos.x + (buttonSize - textSize.x) * 0.5f, pos.y + (buttonSize - textSize.y) * 0.5f),
-                 textColor, label.c_str());
-    if (hovered && isOnlySelected) {
-      ImGui::SetTooltip("%s", tr("At least one channel must stay selected"));
+    if (numberSize > 0.0f) {
+      const std::string label = std::to_string(channel);
+      const ImVec2 textSize = font->CalcTextSizeA(numberSize, FLT_MAX, 0.0f, label.c_str());
+      draw->AddText(font, numberSize,
+                    ImVec2(pos.x + (grid.tileWidth - textSize.x) * 0.5f, pos.y + (grid.tileHeight - textSize.y) * 0.5f),
+                    selected[i] ? selectedTextColor : markColor, label.c_str());
     }
-    if (clicked) {
-      wv::toggleChannelSelection(selected, static_cast<std::uint32_t>(i));
-    }
-    ImGui::PopID();
   }
-  ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
-  const std::array<std::string, 4> labels{withId(tr("With pulses"), "channels/pulses"),
-                                          withId(tr("Connected only"), "channels/connected"),
-                                          withId(tr("One"), "channels/one"), withId(tr("All"), "channels/all")};
-  std::array<float, labels.size()> labelWidths{};
-  for (std::size_t i = 0; i < labels.size(); ++i) {
-    constexpr bool hideTextAfterDoubleHash = true;
-    labelWidths[i] = ImGui::CalcTextSize(labels[i].c_str(), nullptr, hideTextAfterDoubleHash).x +
-                     ImGui::GetStyle().FramePadding.x * 2.0f;
-  }
-  const std::vector<int> rows = gui_format::buttonRows(labelWidths, gap, ImGui::GetContentRegionAvail().x);
-  const auto placeButton = [&](std::size_t i) {
-    if (i == 0) {
-      return;
-    }
-    if (rows[i] == rows[i - 1]) {
-      ImGui::SameLine(0.0f, gap);
-    } else {
-      ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
-    }
-  };
+}
+
+void GuiApp::drawChannelPresets(const SessionUi& ui, std::vector<bool>& selected,
+                                const std::vector<std::uint32_t>& entryChannel, ChannelPresetLook look) {
+  namespace wv = waveform_view;
+  constexpr std::size_t kPulses = 0;
+  constexpr std::size_t kConnected = 1;
+  constexpr std::size_t kOne = 2;
+  constexpr std::size_t kAll = 3;
+  const SessionWaveform* shown = ui.waveform.get();
   const bool captureShown =
     shown != nullptr && shown->sources.shows() == gui_waveform_frame::WaveformSourceChain::Shows::Kept &&
     shown->sources.source() != nullptr;
-  ImGui::BeginDisabled(!captureShown);
-  if (ImGui::Button(labels[0].c_str())) {
+  std::vector<std::uint32_t> connected;
+  for (const auto& decoder : ui.decoders) {
+    const std::vector<std::uint32_t> bound = decoder.boundDeviceChannels();
+    connected.insert(connected.end(), bound.begin(), bound.end());
+  }
+  const std::vector<std::uint32_t> connectedEntries =
+    entryChannel.empty() ? connected : wv::lanesOfChannels(entryChannel, connected);
+  const bool anyConnected = std::any_of(connectedEntries.begin(), connectedEntries.end(),
+                                        [&](std::uint32_t c) { return c < selected.size(); });
+  const std::array<const char*, 4> names{tr("With pulses"), tr("Connected only"), tr("One"), tr("All")};
+  const std::array<const char*, 4> details{
+    captureShown ? tr("Hide channels whose lane stays high or low for whole capture") : tr("No capture is shown"),
+    anyConnected ? tr("Select only channels connected to decoder") : tr("No channel is connected to decoder"),
+    tr("Select only first channel"), tr("Select every channel")};
+  const std::array<bool, 4> enabled{captureShown, anyConnected, true, true};
+  std::array<bool, 4> pressed{};
+  if (look == ChannelPresetLook::Icons) {
+    constexpr std::array<Icon, 4> icons{Icon::ChannelsPulses, Icon::ChannelsConnected, Icon::ChannelsOne,
+                                        Icon::ChannelsAll};
+    constexpr std::array<const char*, 4> ids{"channels_pulses", "channels_connected", "channels_one", "channels_all"};
+    for (std::size_t i = 0; i < pressed.size(); ++i) {
+      if (i != 0) {
+        ImGui::SameLine();
+      }
+      ImGui::BeginDisabled(!enabled[i]);
+      pressed[i] = iconButton(ids[i], icons[i], (std::string(names[i]) + "\n" + details[i]).c_str());
+      ImGui::EndDisabled();
+    }
+  } else {
+    const std::array<std::string, 4> labels{withId(names[kPulses], "channels/pulses"),
+                                            withId(names[kConnected], "channels/connected"),
+                                            withId(names[kOne], "channels/one"), withId(names[kAll], "channels/all")};
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float controlX = ImGui::GetCursorScreenPos().x;
+    std::array<float, labels.size()> labelWidths{};
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+      constexpr bool hideTextAfterDoubleHash = true;
+      labelWidths[i] = ImGui::CalcTextSize(labels[i].c_str(), nullptr, hideTextAfterDoubleHash).x +
+                       ImGui::GetStyle().FramePadding.x * 2.0f;
+    }
+    const std::vector<int> rows = gui_format::buttonRows(labelWidths, gap, ImGui::GetContentRegionAvail().x);
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+      if (i != 0 && rows[i] == rows[i - 1]) {
+        ImGui::SameLine(0.0f, gap);
+      } else if (i != 0) {
+        ImGui::SetCursorScreenPos(ImVec2(controlX, ImGui::GetCursorScreenPos().y));
+      }
+      ImGui::BeginDisabled(!enabled[i]);
+      pressed[i] = ImGui::Button(labels[i].c_str());
+      ImGui::EndDisabled();
+      tooltip(details[i]);
+    }
+  }
+  if (pressed[kPulses]) {
     const std::vector<std::uint32_t> pulsing = wv::channelsWithPulses(*shown->sources.source(), shown->sources.laneDevice());
     const std::vector<std::uint32_t> pulsingEntries =
       entryChannel.empty() ? pulsing : wv::lanesOfChannels(entryChannel, pulsing);
@@ -1336,32 +1496,61 @@ void GuiApp::drawChannelSelector(std::vector<bool>& selected, const std::vector<
       status(tr("No channel has pulses: every lane stays high or low"));
     }
   }
-  ImGui::EndDisabled();
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", captureShown ? tr("Hide channels whose lane stays high or low for whole capture")
-                                         : tr("No capture is shown"));
-  }
-  placeButton(1);
-  const std::vector<std::uint32_t> connectedEntries =
-    entryChannel.empty() ? connected : wv::lanesOfChannels(entryChannel, connected);
-  const bool anyConnected = std::any_of(connectedEntries.begin(), connectedEntries.end(),
-                                        [&](std::uint32_t c) { return c < selected.size(); });
-  ImGui::BeginDisabled(!anyConnected);
-  if (ImGui::Button(labels[1].c_str())) {
+  if (pressed[kConnected]) {
     wv::selectOnlyChannels(selected, connectedEntries);
   }
-  ImGui::EndDisabled();
-  if (!anyConnected && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", tr("No channel is connected to decoder"));
-  }
-  placeButton(2);
-  if (ImGui::Button(labels[2].c_str())) {
+  if (pressed[kOne]) {
     wv::selectOneChannel(selected);
   }
-  placeButton(3);
-  if (ImGui::Button(labels[3].c_str())) {
+  if (pressed[kAll]) {
     wv::selectAllChannels(selected);
   }
+}
+
+void GuiApp::nextToolbarGroup(float width) {
+  ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 3);
+  if (ImGui::GetContentRegionAvail().x < width) {
+    ImGui::NewLine();
+  }
+}
+
+float GuiApp::iconButtonWidth() const {
+  return static_cast<float>(iconPixelSize()) + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+gui_format::ChannelGridSpec GuiApp::toolbarChannelSpec(std::size_t channels, std::size_t perRow) const {
+  const float em = ImGui::GetFontSize();
+  const float height = static_cast<float>(iconPixelSize()) + ImGui::GetStyle().FramePadding.y * 2.0f;
+  const std::size_t rows = (channels + perRow - 1) / perRow;
+  gui_format::ChannelGridSpec spec;
+  spec.perRow = perRow;
+  spec.groupLength = kToolbarChannelGroup;
+  spec.gapX = (std::max)(1.0f, std::round(uiScale() * 2.0f));
+  spec.gapY = spec.gapX;
+  spec.groupGap = (std::max)(spec.gapX + 1.0f, std::round(em * 0.25f));
+  spec.tileWidth = std::round(em * 1.1f);
+  const float rowsGap = spec.gapY * static_cast<float>(rows > 0 ? rows - 1 : 0);
+  spec.tileHeight = (std::max)(std::round(em * 0.6f),
+                               std::floor((height - rowsGap) / static_cast<float>((std::max)(rows, std::size_t{1}))));
+  return spec;
+}
+
+float GuiApp::toolbarChannelGroupWidth(std::size_t channels, std::size_t perRow) const {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float presetsWidth = style.ItemSpacing.x + iconButtonWidth() * 4.0f + style.ItemSpacing.x * 3.0f;
+  return gui_format::channelGrid(channels, toolbarChannelSpec(channels, perRow)).width + presetsWidth;
+}
+
+void GuiApp::drawToolbarChannels(SessionUi& ui, std::vector<bool>& selected,
+                                 const std::vector<std::uint32_t>& entryChannel, std::size_t perRow) {
+  const float em = ImGui::GetFontSize();
+  const gui_format::ChannelGridSpec spec = toolbarChannelSpec(selected.size(), perRow);
+  const gui_format::ChannelGrid grid = gui_format::channelGrid(selected.size(), spec);
+  nextToolbarGroup(toolbarChannelGroupWidth(selected.size(), perRow));
+  const float numberSize = std::round((std::min)(em * 0.8f, spec.tileHeight * 0.85f));
+  drawChannelGrid("##toolbar_channels", ui, selected, entryChannel, grid, numberSize);
+  ImGui::SameLine();
+  drawChannelPresets(ui, selected, entryChannel, ChannelPresetLook::Icons);
 }
 
 void GuiApp::openNewSessionWizard() {

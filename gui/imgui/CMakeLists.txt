@@ -27,6 +27,9 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # WHY: The backend's own TU only: our code includes the backend header and needs the Vulkan prototypes.
   set_source_files_properties(${_imgui}/backends/imgui_impl_vulkan.cpp PROPERTIES
       COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
+  # WHY: Real Vulkan types in the GLFW backend: its stand-in VkResult breaks the One Definition Rule under LTO.
+  set_source_files_properties(${_imgui}/backends/imgui_impl_glfw.cpp PROPERTIES
+      COMPILE_DEFINITIONS GLFW_INCLUDE_VULKAN)
 else()
   message(FATAL_ERROR "bitoscope_imgui: no Dear ImGui backends for ${CMAKE_SYSTEM_NAME} yet (G4)")
 endif()

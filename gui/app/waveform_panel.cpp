@@ -628,11 +628,16 @@ void GuiApp::trimCapture(gui_session::SessionId id, SessionUi& ui, gc::TrimSide 
   runDecodersForSession(id, ui);
 }
 
+float GuiApp::waveformToolbarWidth() const {
+  constexpr float kButtons = 5.0f;
+  return iconButtonWidth() * kButtons + ImGui::GetStyle().ItemSpacing.x * (kButtons - 1.0f);
+}
+
 void GuiApp::drawWaveformToolbar(SessionUi& ui) {
   SessionWaveform* waveform = ui.waveform.get();
   const bool ready = waveform != nullptr && waveform->sources.source() && waveform->viewport;
   const double centre = ready ? waveform->viewport->widthPixels() * 0.5 : 0.0;
-  ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 3);
+  nextToolbarGroup(waveformToolbarWidth());
   ImGui::BeginDisabled(!ready);
   if (iconButton("zoom_in", Icon::ZoomIn, tr("Zoom in (+)"))) {
     waveformCommand(ui, wv::ViewCommand::ZoomIn, centre);

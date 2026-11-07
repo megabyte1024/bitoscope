@@ -48,7 +48,6 @@ Common to every platform:
 - A C++23 compiler: GCC 13 or newer on Linux, MSVC from Visual Studio 2022 (or its Build Tools, with
   the "Desktop development with C++" workload) on Windows
 - Git, to fetch the third-party libraries as submodules
-- libusb 1.0, which the driver SDK links: a system package on Linux, vcpkg on Windows (below)
 
 All other libraries (Cap'n Proto, HDF5, zlib, LZ4, LuaJIT, Dear ImGui, plutovg, plutosvg,
 nlohmann/json and, on Linux, GLFW) come as git submodules and are built with the project.
@@ -58,7 +57,7 @@ nlohmann/json and, on Linux, GLFW) come as git submodules and are built with the
 Package names are Debian/Ubuntu ones:
 
 - `build-essential`, `cmake`, `git`
-- `libusb-1.0-0-dev` and `pkg-config`
+- `pkg-config`
 - For the GUI:
   - `libvulkan-dev` and a Vulkan driver (`mesa-vulkan-drivers` for AMD and Intel GPUs, or the
     vendor's driver)
@@ -67,7 +66,7 @@ Package names are Debian/Ubuntu ones:
     `libxinerama-dev`, `libxcursor-dev`, `libxi-dev`
 
 ```sh
-sudo apt install build-essential cmake git pkg-config libusb-1.0-0-dev libvulkan-dev mesa-vulkan-drivers \
+sudo apt install build-essential cmake git pkg-config libvulkan-dev mesa-vulkan-drivers \
   libdbus-1-dev libwayland-dev libwayland-bin libxkbcommon-dev libx11-dev libxrandr-dev \
   libxinerama-dev libxcursor-dev libxi-dev
 ```
@@ -75,13 +74,6 @@ sudo apt install build-essential cmake git pkg-config libusb-1.0-0-dev libvulkan
 ### Windows
 
 - Visual Studio 2022 or its Build Tools (see above), CMake and Git for Windows.
-- libusb from vcpkg, installed into `C:\vcpkg` (the same in Command Prompt and PowerShell):
-
-  ```bat
-  git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-  C:\vcpkg\bootstrap-vcpkg.bat
-  C:\vcpkg\vcpkg install libusb:x64-windows
-  ```
 
 ## How to compile
 
@@ -111,7 +103,7 @@ git clone --recursive https://github.com/megabyte1024/bitoscope.git
 cd bitoscope
 cmake -S third_party -B build-deps -DCMAKE_INSTALL_PREFIX=%CD%/deps
 cmake --build build-deps --config Release --target install
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CONFIGURATION_TYPES=Release
+cmake -S . -B build -DCMAKE_CONFIGURATION_TYPES=Release
 cmake --build build --config Release
 ```
 
@@ -122,7 +114,7 @@ git clone --recursive https://github.com/megabyte1024/bitoscope.git
 cd bitoscope
 cmake -S third_party -B build-deps "-DCMAKE_INSTALL_PREFIX=$PWD/deps"
 cmake --build build-deps --config Release --target install
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CONFIGURATION_TYPES=Release
+cmake -S . -B build -DCMAKE_CONFIGURATION_TYPES=Release
 cmake --build build --config Release
 ```
 
@@ -166,7 +158,7 @@ dist/
   bitoscope_gui          bitoscope_gui.exe on Windows
   assets/                icons, font and application icon; copy the whole folder
   drivers/
-    demo                 simulated device; demo.exe and libusb-1.0.dll on Windows
+    demo                 simulated device; demo.exe on Windows
   decoders/
     decoders_lowlevel    UART, SPI and I2C; .exe on Windows
     decoders_luajit      Lua decoders; .exe on Windows
@@ -187,11 +179,11 @@ system-wide install).
 - Windows: 64-bit Windows 10 or 11 and the Microsoft Visual C++ Redistributable (x64), which
   provides `MSVCP140.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`. It is already present
   where Visual Studio is installed. Direct3D 11 is part of Windows.
-- Linux: libusb 1.0, the Vulkan loader with a Vulkan driver, D-Bus, and an X11 or Wayland session
+- Linux: the Vulkan loader with a Vulkan driver, D-Bus, and an X11 or Wayland session
   (GLFW loads their libraries at run time). On Debian/Ubuntu:
 
   ```sh
-  sudo apt install libusb-1.0-0 libvulkan1 mesa-vulkan-drivers libdbus-1-3
+  sudo apt install libvulkan1 mesa-vulkan-drivers libdbus-1-3
   ```
 
   The program is linked against the C++ library of the build machine, so the target needs the
@@ -226,7 +218,9 @@ system-wide install).
 - **Decoding.** Decoder plugins receive a capture's samples and return decoded results; decoders can
   be chained.
 - **Plugin SDK.** Drivers and decoders link a small SDK with a C interface (`bitoscope_driver.h`,
-  `bitoscope_decoder.h`) and a thin C++ layer.
+  `bitoscope_decoder.h`) and a thin C++ layer. A driver for a USB device also links the USB
+  library (`libs/driver_usb_sdk`), which finds the device and talks to it through libusb.
+  Bitoscope itself does not need libusb.
 
 ### Source layout
 
@@ -239,6 +233,7 @@ libs/          the shared libraries:
   driver_ipc/, decoder_ipc/          messages of the driver and decoder facets
   bulk_ring/, plugin_ring/, driver_ring/, decoder_ring/   the shared-memory rings
   plugin_c_sdk/, driver_c_sdk/, decoder_c_sdk/            the plugin SDKs (C interface)
+  driver_usb_sdk/                    USB support for drivers: finder, device calls, libusb
   acquisition/   the host side of a capture
   capture/       capture memory
   trigger/       the software trigger

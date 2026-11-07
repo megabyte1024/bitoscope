@@ -55,6 +55,7 @@
 #include <properties_panel.h>
 #include <save_command.h>
 #include <property_editor_model.h>
+#include <channel_grid_layout.h>
 #include <property_tree_layout.h>
 #include <session_list.h>
 #include <session_load.h>
@@ -332,6 +333,13 @@ class GuiApp {
   void drawSessionToolbar(const gui_session::Session& session, SessionUi& ui);
   void drawSessionBody(const gui_session::Session& session, SessionUi& ui);
   void drawWaveformToolbar(SessionUi& ui);
+  static void nextToolbarGroup(float width);
+  float iconButtonWidth() const;
+  float waveformToolbarWidth() const;
+  gui_format::ChannelGridSpec toolbarChannelSpec(std::size_t channels, std::size_t perRow) const;
+  float toolbarChannelGroupWidth(std::size_t channels, std::size_t perRow) const;
+  void drawToolbarChannels(SessionUi& ui, std::vector<bool>& selected, const std::vector<std::uint32_t>& entryChannel,
+                           std::size_t perRow);
   void drawWaveform(gui_session::SessionId sessionId, SessionUi& ui, float headerWidth, float width,
                     float tracesMinimum);
   void drawPropertiesActivityBar(SessionUi& ui, float width);
@@ -385,7 +393,8 @@ class GuiApp {
   bool drawDecoderPicker(SessionUi& ui);
   struct DecoderChannelChoices {
     std::vector<gui_decode::CapturedChannel> captured;
-    std::vector<std::string> labels;
+    std::vector<std::string> names;
+    std::vector<waveform_view::ColorChoice> colors;
   };
   static DecoderChannelChoices decoderChannelChoices(const SessionUi& ui);
   struct DecoderSettingsChange {
@@ -394,9 +403,13 @@ class GuiApp {
   };
   DecoderSettingsChange drawDecoderSettings(SessionUi& ui, std::size_t index, const DecoderChannelChoices& channels);
   void applyDecoderSettingsChange(gui_session::SessionId id, SessionUi& ui, const DecoderSettingsChange& change);
-  void drawChannelSelector(std::vector<bool>& selected, const std::vector<waveform_view::ColorChoice>& colors,
-                           const std::vector<std::uint32_t>& connected, const SessionWaveform* shown,
-                           const std::vector<std::uint32_t>& entryChannel = {});
+  void drawChannelSelector(SessionUi& ui, std::vector<bool>& selected, const std::vector<std::uint32_t>& entryChannel = {});
+  void drawChannelGrid(const char* id, const SessionUi& ui, std::vector<bool>& selected,
+                       const std::vector<std::uint32_t>& entryChannel, const gui_format::ChannelGrid& grid,
+                       float numberSize);
+  enum class ChannelPresetLook { Text, Icons };
+  void drawChannelPresets(const SessionUi& ui, std::vector<bool>& selected, const std::vector<std::uint32_t>& entryChannel,
+                          ChannelPresetLook look);
   void drawNewSessionWizard();
   void openFirmwareWindow();
   void drawFirmwareWindow();

@@ -22,7 +22,8 @@ PropertyTreeColumns propertyTreeColumns(std::span<const float> labelWidths, floa
   const float maxLabel = std::max(0.0f, availableWidth - minControlWidth);
   label = std::min(label, maxLabel);
   const float control = std::max(0.0f, availableWidth - label);
-  return PropertyTreeColumns{label, control};
+  const float labelText = std::max(0.0f, label - gap);
+  return PropertyTreeColumns{.label = label, .labelText = labelText, .control = control};
 }
 
 int buttonsPerRow(float availableWidth, float buttonSize, float gap) {

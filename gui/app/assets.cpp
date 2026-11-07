@@ -47,6 +47,14 @@ std::string_view iconFileName(Icon icon) {
   switch (icon) {
   case Icon::About:
     return "about.svg";
+  case Icon::ChannelsAll:
+    return "channels_all.svg";
+  case Icon::ChannelsConnected:
+    return "channels_connected.svg";
+  case Icon::ChannelsOne:
+    return "channels_one.svg";
+  case Icon::ChannelsPulses:
+    return "channels_pulses.svg";
   case Icon::Cursors:
     return "cursors.svg";
   case Icon::Decoders:

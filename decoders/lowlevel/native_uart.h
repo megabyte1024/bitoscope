@@ -26,6 +26,8 @@ class NativeUart final : public plugin::ProtocolDecoder {
   static constexpr uint32_t kClassParityError = 4;
   static constexpr uint32_t kClassFrameCutOff = 5;
   static constexpr uint32_t kClassBit = 6;
+  static constexpr uint32_t kClassBreak = 7;
+  static constexpr uint32_t kClassFalseStart = 8;
 
   plugin::DecoderDeclaration declaration() const override;
   std::expected<void, std::string> check(const plugin::DecodeJob& job) const override;

@@ -2,7 +2,7 @@
 
 cmake_minimum_required(VERSION 3.24)
 
-project(bitoscope VERSION 0.3.0 LANGUAGES CXX)
+project(bitoscope VERSION 0.4.0 LANGUAGES CXX)
 
 # WHY: CMAKE_CXX_STANDARD 17 only pins third-party builds; every own target must declare cxx_std_23.
 set(CMAKE_CXX_STANDARD 17)
@@ -47,6 +47,8 @@ endfunction()
 include(cmake/BitoscopeOwnTargetWarnings.cmake)
 
 include(cmake/BitoscopeBuildJobs.cmake)
+
+include(cmake/BitoscopeOptimization.cmake)
 
 include(cmake/BitoscopeDeps.cmake)
 
@@ -164,5 +166,6 @@ if(BITOSCOPE_PRIVATE_TREE)
   add_subdirectory(private)
 endif()
 
-# WHY: Last, after every add_subdirectory: a target added below this line would get no warnings.
+# WHY: Last, after every add_subdirectory: a target added below this line would get no warnings or optimization.
 bitoscope_enable_warnings_on_own_targets("${CMAKE_SOURCE_DIR}")
+bitoscope_optimize_own_targets("${CMAKE_SOURCE_DIR}")

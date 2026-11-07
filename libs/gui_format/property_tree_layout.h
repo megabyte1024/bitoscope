@@ -11,6 +11,7 @@ namespace bitoscope::gui_format {
 
 struct PropertyTreeColumns {
   float label = 0.0f;
+  float labelText = 0.0f;
   float control = 0.0f;
 };
 

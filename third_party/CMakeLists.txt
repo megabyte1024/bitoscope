@@ -190,9 +190,18 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../private/third_party/deps.cmake" OPTIONAL
 # OpenSSL and zlib support (kj-tls, kj-gzip) are OFF rather than AUTO, so the build never picks up
 # whatever the machine happens to have (a hidden system dependency: a library that found vcpkg's
 # zlib this way broke once that zlib was removed); the project uses serialization only.
+set(_capnproto_lto "${CMAKE_BINARY_DIR}/capnproto-lto.cmake")
+# WHY: Fat objects: a build with BITOSCOPE_LTO=OFF links their machine code instead of running LTO on them.
+file(WRITE "${_capnproto_lto}" [=[
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(CMAKE_CXX_COMPILE_OPTIONS_IPO -flto=1 -flto-partition=one -ffat-lto-objects)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+endif()
+]=])
 bitoscope_add_dep(capnproto "${CMAKE_CURRENT_SOURCE_DIR}/capnproto/c++" "
 set(WITH_OPENSSL OFF CACHE STRING \"\")
 set(WITH_ZLIB OFF CACHE STRING \"\")
+set(CMAKE_PROJECT_INCLUDE \"${_capnproto_lto}\" CACHE FILEPATH \"\")
 ")
 
 if(BITOSCOPE_DEPS_GUI)

@@ -22,6 +22,7 @@
 #include <channel_choices.h>
 #include <channel_names.h>
 #include <decode_budget.h>
+#include <default_channel_colors.h>
 #include <decoder_chain_config.h>
 #include <decoder_labels.h>
 #include <decoder_pairing.h>
@@ -61,6 +62,77 @@ bool comboOf(const char* label, int& index, const std::vector<std::string>& item
       if (selected) ImGui::SetItemDefaultFocus();
     }
     ImGui::EndCombo();
+  }
+  return changed;
+}
+
+void drawChannelChoice(ImVec2 at, float width, std::uint32_t channel, std::string_view name,
+                       const waveform_view::ColorChoice& color, bool dark) {
+  const waveform_view::SelectorButtonColors button = waveform_view::selectorButtonColors(color, dark);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const float height = ImGui::GetTextLineHeight();
+  const std::string number = std::to_string(channel);
+  const ImVec2 numberSize = ImGui::CalcTextSize(number.c_str());
+  const float rounding = std::round(height * 0.3f);
+  const float outline = (std::max)(1.0f, std::round(ImGui::GetFontSize() / kFontSizeBase));
+  const ImVec2 max(at.x + width, at.y + height);
+  // WHY: Raw ImU32 colours skip the style alpha that BeginDisabled lowers, so apply it here.
+  draw->AddRectFilled(at, max, ImGui::GetColorU32(IM_COL32(button.fill.r, button.fill.g, button.fill.b, 255)),
+                      rounding);
+  if (button.outlined) {
+    addEdgeCentredOutline(draw, at, max,
+                          ImGui::GetColorU32(IM_COL32(button.outline.r, button.outline.g, button.outline.b, 255)),
+                          rounding, outline);
+  }
+  draw->AddText(ImVec2(at.x + std::round((width - numberSize.x) * 0.5f), at.y),
+                ImGui::GetColorU32(
+                  IM_COL32(button.selectedText.r, button.selectedText.g, button.selectedText.b, 255)),
+                number.c_str());
+  if (!name.empty()) {
+    draw->AddText(ImVec2(max.x + ImGui::GetStyle().ItemInnerSpacing.x, at.y), ImGui::GetColorU32(ImGuiCol_Text),
+                  name.data(), name.data() + name.size());
+  }
+}
+
+bool channelComboOf(const char* label, int& index, std::span<const gd::CapturedChannel> captured,
+                    std::span<const std::string> names, std::span<const waveform_view::ColorChoice> colors, bool dark) {
+  const int count = static_cast<int>(captured.size()) + 1;
+  index = std::clamp(index, 0, count - 1);
+  const char* noneText = tr("(none)");
+  float widestNumber = 0.0f;
+  for (const gd::CapturedChannel& c : captured) {
+    widestNumber = (std::max)(widestNumber, ImGui::CalcTextSize(std::to_string(c.deviceChannel).c_str()).x);
+  }
+  const float height = ImGui::GetTextLineHeight();
+  const float chipWidth = (std::max)(height, std::round(widestNumber + height * 0.5f));
+  const auto drawChoice = [&](int i, ImVec2 at) {
+    if (i == 0) {
+      ImGui::GetWindowDrawList()->AddText(at, ImGui::GetColorU32(ImGuiCol_Text), noneText);
+      return;
+    }
+    const std::size_t c = static_cast<std::size_t>(i) - 1;
+    drawChannelChoice(at, chipWidth, captured[c].deviceChannel, names[c], colors[c], dark);
+  };
+  bool changed = false;
+  if (ImGui::BeginCombo(label, "")) {
+    for (int i = 0; i < count; ++i) {
+      const bool selected = i == index;
+      ImGui::PushID(i);
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      const bool clicked = ImGui::Selectable("##choice", selected);
+      drawChoice(i, at);
+      ImGui::PopID();
+      if (clicked) {
+        index = i;
+        changed = true;
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  if (ImGui::BeginComboPreview()) {
+    drawChoice(index, ImGui::GetCursorScreenPos());
+    ImGui::EndComboPreview();
   }
   return changed;
 }
@@ -401,9 +473,9 @@ GuiApp::DecoderChannelChoices GuiApp::decoderChannelChoices(const SessionUi& ui)
   const std::size_t deviceChannels = ui.openedFrom.empty() && ui.settings ? ui.settings->channels.size() : 0;
   choices.captured =
     gd::bindableChannels(gd::settingsChannels(ui.running, ui.keptDeviceChannels), deviceChannels, ui.channelNames);
-  choices.labels.push_back(tr("(none)"));
   for (const gd::CapturedChannel& c : choices.captured) {
-    choices.labels.push_back(gui_capture::channelChoiceLabel(ui.channelUserNames, ui.channelNames, c.deviceChannel));
+    choices.names.push_back(gui_capture::shownChannelName(ui.channelUserNames, ui.channelNames, c.deviceChannel));
+    choices.colors.push_back(gui_capture::channelColorOrPalette(ui.channelColors, c.deviceChannel));
   }
   return choices;
 }
@@ -465,7 +537,7 @@ GuiApp::DecoderSettingsChange GuiApp::drawDecoderSettings(SessionUi& ui, std::si
       }
     }
     ImGui::BeginDisabled(ui.decodes.runsLive());
-    const bool channelChosen = comboOf("##ch", choice, channels.labels);
+    const bool channelChosen = channelComboOf("##ch", choice, channels.captured, channels.names, channels.colors, dark);
     ImGui::EndDisabled();
     if (channelChosen) {
       const std::optional<std::uint32_t> picked =

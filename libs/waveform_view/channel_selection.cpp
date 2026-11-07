@@ -28,6 +28,13 @@ bool toggleChannelSelection(std::vector<bool>& selected, std::uint32_t channel) 
   return true;
 }
 
+bool setChannelSelected(std::vector<bool>& selected, std::uint32_t channel, bool select) {
+  if (channel >= selected.size() || selected[channel] == select) {
+    return false;
+  }
+  return toggleChannelSelection(selected, channel);
+}
+
 void selectAllChannels(std::vector<bool>& selected) {
   std::fill(selected.begin(), selected.end(), true);
 }

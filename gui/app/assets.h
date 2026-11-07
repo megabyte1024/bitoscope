@@ -20,6 +20,10 @@ namespace bitoscope::gui {
 
 enum class Icon {
   About,
+  ChannelsAll,
+  ChannelsConnected,
+  ChannelsOne,
+  ChannelsPulses,
   Cursors,
   Decoders,
   Device,
@@ -42,7 +46,7 @@ enum class Icon {
   ZoomIn,
   ZoomOut,
 };
-inline constexpr std::size_t kIconCount = 22;
+inline constexpr std::size_t kIconCount = 26;
 static_assert(static_cast<std::size_t>(Icon::ZoomOut) + 1 == kIconCount);
 
 std::string_view iconFileName(Icon icon);
