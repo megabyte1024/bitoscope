@@ -24,6 +24,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       ${_imgui}/backends/imgui_impl_vulkan.cpp
   )
   target_link_libraries(bitoscope_imgui PUBLIC glfw Vulkan::Vulkan)
+  target_compile_definitions(bitoscope_imgui PUBLIC GLFW_INCLUDE_NONE)
   # WHY: The backend's own TU only: our code includes the backend header and needs the Vulkan prototypes.
   set_source_files_properties(${_imgui}/backends/imgui_impl_vulkan.cpp PROPERTIES
       COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
