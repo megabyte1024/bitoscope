@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.30...4.4)
+
 # Run (cmake -P) as the INSTALL step of the "luajit" ExternalProject in third_party/CMakeLists.txt,
 # once per configuration, after build_luajit.cmake staged that configuration's library and headers.
 # Copies the staged files into the deps prefix and drops the hand-written luajitConfig.cmake next

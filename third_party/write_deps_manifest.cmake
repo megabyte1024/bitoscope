@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.30...4.4)
+
 # Run at install time by third_party/CMakeLists.txt (install(CODE)): writes deps/bitoscope_deps.cmake,
 # the marker the project build looks for and the record of which submodule commit each installed
 # library came from. Inputs: BITOSCOPE_DEPS_SOURCE_DIRS (the directories holding the submodules,

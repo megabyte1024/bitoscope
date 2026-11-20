@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.30...4.4)
+
 # Run (cmake -P) as the BUILD step of the "luajit" ExternalProject in third_party/CMakeLists.txt,
 # once per configuration. LuaJIT ships no CMake build of its own: on MSVC it is built by
 # src/msvcbuild.bat, and elsewhere by its own makefile.

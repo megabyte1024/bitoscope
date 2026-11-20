@@ -43,7 +43,7 @@
 # INFORMATION_FORMAT=Embedded), not written to a separate compile-time .pdb that the install
 # would have to carry next to the library: without that the project's Debug links warn (LNK4099)
 # that the library's .pdb is missing, and the libraries cannot be stepped into.
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.30...4.4)
 project(bitoscope_deps NONE)
 
 include(ExternalProject)

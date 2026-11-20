@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
 
+cmake_minimum_required(VERSION 3.30...4.4)
+
 if(NOT DEFINED OUT OR NOT DEFINED FUNCTION)
   message(FATAL_ERROR "embed_lua.cmake needs -DOUT=... and -DFUNCTION=...")
 endif()

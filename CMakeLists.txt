@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.30...4.4)
 
 project(bitoscope VERSION 0.4.1 LANGUAGES CXX)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 # WHY: CMAKE_CXX_STANDARD 17 only pins third-party builds; every own target must declare cxx_std_23.
 set(CMAKE_CXX_STANDARD 17)
