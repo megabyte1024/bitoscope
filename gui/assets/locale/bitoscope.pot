@@ -517,23 +517,7 @@ msgid "Check file"
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
-msgid "Choose FNIRSI firmware file (.bin), then press Check file."
-msgstr ""
-
-#: gui/app/firmware_panel.cpp
-msgid "This file is not DLA firmware file."
-msgstr ""
-
-#: gui/app/firmware_panel.cpp
-msgid "This file is not one of FNIRSI firmware files known to bitoscope. Install it only if you are sure it is made for your analyzer."
-msgstr ""
-
-#: gui/app/firmware_panel.cpp
-msgid "Install this file anyway"
-msgstr ""
-
-#: gui/app/firmware_panel.cpp
-msgid "Install it anyway, although it is made for other model (can damage analyzer)"
+msgid "Choose firmware file (.bin), then press Check file: FNIRSI firmware file, file with own MCU image and FNIRSI FPGA image, or MCU or FPGA image alone."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -546,6 +530,10 @@ msgstr ""
 
 #: gui/app/firmware_panel.cpp
 msgid "Update takes about 5 minutes. Do not unplug analyzer until it ends."
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Installing {} image..."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp
@@ -562,6 +550,10 @@ msgstr ""
 
 #: gui/app/firmware_panel.cpp
 msgid "Problem during update: starting again (try {} of {})"
+msgstr ""
+
+#: gui/app/firmware_panel.cpp
+msgid "Update finished."
 msgstr ""
 
 #: gui/app/firmware_panel.cpp

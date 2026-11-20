@@ -120,8 +120,11 @@ Outcome waitForFinish(FirmwareUpdateClient& client, FirmwareEvents& events, std:
         } else if (*answer == fw::CancelAnswer::needsConfirmation) {
           confirming = true;
           confirmWaited = 0ms;
-          out << "warning: update is inside FPGA image: analyzer cannot capture until update completes. "
-                 "Press Ctrl+C again within 5 s to stop anyway"
+          const auto now = events.progress();
+          const std::string part = now && !now->imageName.empty() ? now->imageName : std::string("FPGA");
+          out << std::format("warning: update is inside {} image: analyzer cannot capture until update completes. "
+                             "Press Ctrl+C again within 5 s to stop anyway",
+                             part)
               << std::endl;
         } else {
           if (seams.clear_interrupt) seams.clear_interrupt();
@@ -230,6 +233,7 @@ int runFlashFirmware(const CliOptions& opts, const host::pipe::DriverDevice& ses
   if (result.finished->outcome != fw::Outcome::done) return failed(err, result.finished->message);
   out << result.finished->message << std::endl;
 
+  if (!result.finished->canCapture) return kExitComplete;
   if (!seams.reopen || !seams.capture_check) return kExitComplete;
   out << std::format("update finished; waiting {} s for analyzer to start",
                      std::chrono::duration_cast<std::chrono::seconds>(seams.program_start_wait).count())

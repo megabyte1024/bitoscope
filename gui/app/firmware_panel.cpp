@@ -313,6 +313,9 @@ void GuiApp::drawFirmwareWindow() {
               errorText(tr("Update did not succeed."));
               break;
           }
+          if (!done.message.empty() && !window.lastResult->leftUpdateMode) {
+            ImGui::TextWrapped("%s", done.message.c_str());
+          }
           if (!done.canCapture) {
             errorText(tr("Analyzer cannot capture until firmware is installed completely. Run update again: this "
                          "repairs it."));
@@ -392,32 +395,12 @@ void GuiApp::drawFirmwareWindow() {
         errorText(window.error);
       }
       if (view.stage == gf::Stage::Idle && window.error.empty()) {
-        ImGui::TextWrapped("%s", tr("Choose FNIRSI firmware file (.bin), then press Check file."));
+        ImGui::TextWrapped("%s", tr("Choose firmware file (.bin), then press Check file: FNIRSI firmware file, file "
+                                    "with own MCU image and FNIRSI FPGA image, or MCU or FPGA image alone."));
       } else if (view.stage == gf::Stage::Working || view.stage == gf::Stage::Ready) {
         ImGui::TextWrapped("%s", view.message.c_str());
-      } else if (view.stage == gf::Stage::Refused && view.verdict == fw::Verdict::unreadable) {
-        errorText(tr("This file is not DLA firmware file."));
-      } else if (view.stage == gf::Stage::Refused && view.verdict == fw::Verdict::unknownFile) {
-        errorText(tr("This file is not one of FNIRSI firmware files known to bitoscope. Install it only if you are "
-                     "sure it is made for your analyzer."));
       } else if (view.stage == gf::Stage::Refused) {
         errorText(view.message);
-      }
-      const bool riskUnknown = view.verdict == fw::Verdict::unknownFile || view.confirmUnknownFile;
-      const bool riskOther = view.verdict == fw::Verdict::otherModel || view.confirmOtherModel;
-      if ((view.stage == gf::Stage::Ready || view.stage == gf::Stage::Refused) && (riskUnknown || riskOther)) {
-        if (riskUnknown) {
-          bool confirmed = view.confirmUnknownFile;
-          if (ImGui::Checkbox(tr("Install this file anyway"), &confirmed)) {
-            model.setConfirmUnknownFile(confirmed);
-          }
-        }
-        if (riskOther) {
-          bool confirmed = view.confirmOtherModel;
-          if (ImGui::Checkbox(tr("Install it anyway, although it is made for other model (can damage analyzer)"), &confirmed)) {
-            model.setConfirmOtherModel(confirmed);
-          }
-        }
       }
     } else {
       ImGui::TextUnformatted(trf("Analyzer: {}", window.deviceName).c_str());
@@ -444,7 +427,9 @@ void GuiApp::drawFirmwareWindow() {
                                    : static_cast<float>(static_cast<double>(progress.bytesSent) /
                                                         static_cast<double>(progress.bytesTotal));
           ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f));
-          if (progress.phase == fw::Phase::sending) {
+          if (progress.phase == fw::Phase::sending && !progress.imageName.empty()) {
+            ImGui::TextUnformatted(trf("Installing {} image...", progress.imageName).c_str());
+          } else if (progress.phase == fw::Phase::sending) {
             ImGui::TextUnformatted(tr("Installing firmware..."));
           } else if (progress.phase == fw::Phase::finishing) {
             ImGui::TextUnformatted(tr("Finishing: analyzer restarts with new firmware"));
@@ -461,7 +446,12 @@ void GuiApp::drawFirmwareWindow() {
       }
       if (view.stage == gf::Stage::Finished) {
         ImGui::Spacing();
-        ImGui::TextWrapped("%s", tr("Firmware installed. Analyzer restarted with new firmware."));
+        ImGui::TextWrapped("%s", view.finished && !view.finished->canCapture
+                                   ? tr("Update finished.")
+                                   : tr("Firmware installed. Analyzer restarted with new firmware."));
+        if (view.finished && !view.finished->message.empty()) {
+          ImGui::TextWrapped("%s", view.finished->message.c_str());
+        }
       }
       if (view.stage == gf::Stage::Running && view.cancelNeedsConfirmation) {
         errorText(tr("If you stop now, analyzer cannot capture until you run update again to its end."));
